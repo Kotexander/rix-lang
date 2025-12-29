@@ -15,6 +15,8 @@ pub enum Tok<'a> {
     Ampersand,
     Caret,
     Pipe,
+    And,
+    Or,
 
     Equal,
     EqualEqual,
@@ -204,6 +206,8 @@ impl<'input> Lexer<'input> {
                         "while" => Tok::While,
                         "break" => Tok::Break,
                         "continue" => Tok::Continue,
+                        "and" => Tok::And,
+                        "or" => Tok::Or,
                         _ => Tok::Identifier(identifier),
                     }
                 }
