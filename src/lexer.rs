@@ -40,7 +40,7 @@ pub enum Tok<'a> {
     DotDotDot,
     Comma,
     Colon,
-    Newline,
+    Semicolon,
 
     Unknown(char),
 
@@ -60,17 +60,101 @@ impl<'a> Tok<'a> {
         self == Tok::Eof
     }
 }
+impl<'a> std::fmt::Display for Tok<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Tok::Number(n) => write!(f, "number `{:?}`", n),
+            Tok::String(s) => write!(f, "string `{:?}`", s),
+            Tok::Identifier(id) => write!(f, "identifier `{}`", id),
+            Tok::Plus => write!(f, "`+`"),
+            Tok::Minus => write!(f, "`-`"),
+            Tok::Asterisk => write!(f, "`*`"),
+            Tok::Slash => write!(f, "`/`"),
+            Tok::Percent => write!(f, "`%`"),
+            Tok::Bang => write!(f, "`!`"),
+            Tok::Ampersand => write!(f, "`&`"),
+            Tok::Caret => write!(f, "`^`"),
+            Tok::Pipe => write!(f, "`|`"),
+            Tok::And => write!(f, "`and`"),
+            Tok::Or => write!(f, "`or`"),
+            Tok::Equal => write!(f, "`=`"),
+            Tok::EqualEqual => write!(f, "`==`"),
+            Tok::BangEqual => write!(f, "`!=`"),
+            Tok::Less => write!(f, "`<`"),
+            Tok::LessEqual => write!(f, "`<=`"),
+            Tok::LessLess => write!(f, "`<<`"),
+            Tok::Greater => write!(f, "`>`"),
+            Tok::GreaterEqual => write!(f, "`>=`"),
+            Tok::GreaterGreater => write!(f, "`>>`"),
+            Tok::LParen => write!(f, "`(`"),
+            Tok::RParen => write!(f, "`)`"),
+            Tok::LBrace => write!(f, "`{{`"),
+            Tok::RBrace => write!(f, "`}}`"),
+            Tok::LBracket => write!(f, "`[`"),
+            Tok::RBracket => write!(f, "`]`"),
+            Tok::Dot => write!(f, "`.`"),
+            Tok::DotDot => write!(f, "`..`"),
+            Tok::DotDotDot => write!(f, "`...`"),
+            Tok::Comma => write!(f, "`,`"),
+            Tok::Colon => write!(f, "`:`"),
+            Tok::Semicolon => write!(f, "`;`"),
+            Tok::Unknown(ch) => write!(f, "`{}`", ch),
+            Tok::Fun => write!(f, "`fun`"),
+            Tok::Return => write!(f, "`return`"),
+            Tok::Var => write!(f, "`var`"),
+            Tok::If => write!(f, "`if`"),
+            Tok::Else => write!(f, "`else`"),
+            Tok::While => write!(f, "`while`"),
+            Tok::Break => write!(f, "`break`"),
+            Tok::Continue => write!(f, "`continue`"),
+            Tok::Eof => write!(f, "<EOF>"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub start: u32,
+    pub end: u32,
+}
+impl Span {
+    pub fn join(&self, other: &Span) -> Span {
+        Span {
+            start: self.start,
+            end: other.end,
+        }
+    }
+    pub fn between(&self, other: &Span) -> Span {
+        Span {
+            start: self.end,
+            end: other.start,
+        }
+    }
+}
+impl std::ops::Index<Span> for str {
+    type Output = str;
+
+    fn index(&self, index: Span) -> &Self::Output {
+        &self[index.start as usize..index.end as usize]
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token<'a> {
     pub kind: Tok<'a>,
-    pub start: u32,
-    pub end: u32,
+    pub span: Span,
 }
 
 pub struct Lexer<'input> {
     input: &'input str,
     chars: Chars<'input>,
+
+    peek: Option<Token<'input>>,
+}
+impl std::fmt::Debug for Lexer<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Lexer").finish_non_exhaustive()
+    }
 }
 impl<'input> Lexer<'input> {
     pub fn new(input: &'input str) -> Self {
@@ -78,42 +162,52 @@ impl<'input> Lexer<'input> {
         Lexer {
             input,
             chars: input.chars(),
+            peek: None,
         }
     }
 
     fn location(&self) -> u32 {
         (self.input.len() - self.chars.as_str().len()) as u32
     }
-    fn peek(&self) -> Option<char> {
+
+    fn peek_char(&self) -> Option<char> {
         self.chars.clone().next()
     }
-    fn next(&mut self) -> Option<char> {
+    fn next_char(&mut self) -> Option<char> {
         self.chars.next()
     }
-
-    fn r#match(&mut self, ch: char) -> bool {
-        if let Some(next_char) = self.peek() {
-            if next_char == ch {
-                self.next();
-                return true;
-            }
+    fn match_char(&mut self, ch: char) -> bool {
+        if let Some(next_char) = self.peek_char()
+            && next_char == ch
+        {
+            self.next_char();
+            return true;
         }
         false
     }
 
+    pub fn peek(&mut self) -> &Token<'input> {
+        if self.peek.is_none() {
+            let token = self.advance();
+            self.peek = Some(token);
+        }
+        // Safety: We just ensured that peek is Some.
+        unsafe { self.peek.as_ref().unwrap_unchecked() }
+    }
     pub fn advance(&mut self) -> Token<'input> {
+        if let Some(peek) = self.peek.take() {
+            return peek;
+        }
         loop {
             let start = self.location();
-            let Some(ch) = self.next() else {
+            let Some(ch) = self.next_char() else {
                 return Token {
                     kind: Tok::Eof,
-                    start,
-                    end: start,
+                    span: Span { start, end: start },
                 };
             };
 
             let tok = match ch {
-                '\n' => Tok::Newline,
                 ch if ch.is_whitespace() => {
                     self.eat_whitespace();
                     continue;
@@ -136,7 +230,7 @@ impl<'input> Lexer<'input> {
                 '/' => Tok::Slash,
                 '%' => Tok::Percent,
                 '!' => {
-                    if self.r#match('=') {
+                    if self.match_char('=') {
                         Tok::BangEqual
                     } else {
                         Tok::Bang
@@ -146,25 +240,25 @@ impl<'input> Lexer<'input> {
                 '^' => Tok::Caret,
                 '|' => Tok::Pipe,
                 '=' => {
-                    if self.r#match('=') {
+                    if self.match_char('=') {
                         Tok::EqualEqual
                     } else {
                         Tok::Equal
                     }
                 }
                 '<' => {
-                    if self.r#match('=') {
+                    if self.match_char('=') {
                         Tok::LessEqual
-                    } else if self.r#match('<') {
+                    } else if self.match_char('<') {
                         Tok::LessLess
                     } else {
                         Tok::Less
                     }
                 }
                 '>' => {
-                    if self.r#match('=') {
+                    if self.match_char('=') {
                         Tok::GreaterEqual
-                    } else if self.r#match('>') {
+                    } else if self.match_char('>') {
                         Tok::GreaterGreater
                     } else {
                         Tok::Greater
@@ -177,8 +271,8 @@ impl<'input> Lexer<'input> {
                 '[' => Tok::LBracket,
                 ']' => Tok::RBracket,
                 '.' => {
-                    if self.r#match('.') {
-                        if self.r#match('.') {
+                    if self.match_char('.') {
+                        if self.match_char('.') {
                             Tok::DotDotDot
                         } else {
                             Tok::DotDot
@@ -189,6 +283,7 @@ impl<'input> Lexer<'input> {
                 }
                 ',' => Tok::Comma,
                 ':' => Tok::Colon,
+                ';' => Tok::Semicolon,
                 '#' => {
                     self.eat_comment();
                     continue;
@@ -217,26 +312,20 @@ impl<'input> Lexer<'input> {
             let end = self.location();
             return Token {
                 kind: tok,
-                start,
-                end,
+                span: Span { start, end },
             };
         }
     }
 
+    #[inline]
     fn eat_numbers(&mut self) {
-        while let Some(ch) = self.peek() {
-            if ch.is_ascii_digit() {
-                self.next();
-            } else {
-                break;
-            }
-        }
+        self.eat_identifier();
     }
 
     fn eat_whitespace(&mut self) {
-        while let Some(ch) = self.peek() {
+        while let Some(ch) = self.peek_char() {
             if ch.is_whitespace() {
-                self.next();
+                self.next_char();
             } else {
                 break;
             }
@@ -245,7 +334,7 @@ impl<'input> Lexer<'input> {
 
     fn eat_string(&mut self) {
         let mut escaped = false;
-        while let Some(ch) = self.next() {
+        while let Some(ch) = self.next_char() {
             if escaped {
                 escaped = false;
             } else if ch == '\\' {
@@ -257,19 +346,17 @@ impl<'input> Lexer<'input> {
     }
 
     fn eat_comment(&mut self) {
-        while let Some(ch) = self.peek() {
+        while let Some(ch) = self.next_char() {
             if ch == '\n' {
                 break;
-            } else {
-                self.next();
             }
         }
     }
 
     fn eat_identifier(&mut self) {
-        while let Some(ch) = self.peek() {
+        while let Some(ch) = self.peek_char() {
             if ch.is_ascii_alphanumeric() || ch == '_' {
-                self.next();
+                self.next_char();
             } else {
                 break;
             }
@@ -283,9 +370,10 @@ mod tests {
 
     #[test]
     fn numbers() {
-        let mut lexer = Lexer::new("123 456");
+        let mut lexer = Lexer::new("123 456 7eight_nine");
         assert_eq!(lexer.advance().kind, Tok::Number("123"));
         assert_eq!(lexer.advance().kind, Tok::Number("456"));
+        assert_eq!(lexer.advance().kind, Tok::Number("7eight_nine"));
         assert_eq!(lexer.advance().kind, Tok::Eof);
     }
 
@@ -326,23 +414,23 @@ mod tests {
         let mut lexer = Lexer::new("var x = 42");
         let token = lexer.advance();
         assert_eq!(token.kind, Tok::Var);
-        assert_eq!(token.start, 0);
-        assert_eq!(token.end, 3);
+        assert_eq!(token.span.start, 0);
+        assert_eq!(token.span.end, 3);
 
         let token = lexer.advance();
         assert_eq!(token.kind, Tok::Identifier("x"));
-        assert_eq!(token.start, 4);
-        assert_eq!(token.end, 5);
+        assert_eq!(token.span.start, 4);
+        assert_eq!(token.span.end, 5);
 
         let token = lexer.advance();
         assert_eq!(token.kind, Tok::Equal);
-        assert_eq!(token.start, 6);
-        assert_eq!(token.end, 7);
+        assert_eq!(token.span.start, 6);
+        assert_eq!(token.span.end, 7);
 
         let token = lexer.advance();
         assert_eq!(token.kind, Tok::Number("42"));
-        assert_eq!(token.start, 8);
-        assert_eq!(token.end, 10);
+        assert_eq!(token.span.start, 8);
+        assert_eq!(token.span.end, 10);
     }
 
     #[test]
@@ -357,8 +445,6 @@ mod tests {
             }
             "#,
         );
-        assert_eq!(lexer.advance().kind, Tok::Newline);
-        assert_eq!(lexer.advance().kind, Tok::Newline);
         assert_eq!(lexer.advance().kind, Tok::Var);
         assert_eq!(lexer.advance().kind, Tok::Identifier("result"));
         assert_eq!(lexer.advance().kind, Tok::Equal);
@@ -368,8 +454,6 @@ mod tests {
         assert_eq!(lexer.advance().kind, Tok::Comma);
         assert_eq!(lexer.advance().kind, Tok::Number("10"));
         assert_eq!(lexer.advance().kind, Tok::RParen);
-        assert_eq!(lexer.advance().kind, Tok::Newline);
-        assert_eq!(lexer.advance().kind, Tok::Newline);
         assert_eq!(lexer.advance().kind, Tok::Fun);
         assert_eq!(lexer.advance().kind, Tok::Identifier("add"));
         assert_eq!(lexer.advance().kind, Tok::LParen);
@@ -380,14 +464,11 @@ mod tests {
         assert_eq!(lexer.advance().kind, Tok::Colon);
         assert_eq!(lexer.advance().kind, Tok::Identifier("i32"));
         assert_eq!(lexer.advance().kind, Tok::LBrace);
-        assert_eq!(lexer.advance().kind, Tok::Newline);
         assert_eq!(lexer.advance().kind, Tok::Return);
         assert_eq!(lexer.advance().kind, Tok::Identifier("a"));
         assert_eq!(lexer.advance().kind, Tok::Plus);
         assert_eq!(lexer.advance().kind, Tok::Identifier("b"));
-        assert_eq!(lexer.advance().kind, Tok::Newline);
         assert_eq!(lexer.advance().kind, Tok::RBrace);
-        assert_eq!(lexer.advance().kind, Tok::Newline);
         assert_eq!(lexer.advance().kind, Tok::Eof);
     }
 }
