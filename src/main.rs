@@ -67,7 +67,7 @@ fn main() {
 
     let mut lexer = lexer::Lexer::new(&test_data);
     loop {
-        let token = lexer.advance();
+        let token = lexer.next();
         println!("{:?}", token);
 
         if token.kind.is_eof() {
@@ -76,15 +76,28 @@ fn main() {
     }
 
     let mut parser = parser::Parser::new(&test_data);
-    let expr1 = parser.parse();
-    let expr2 = parser.parse();
-    // println!("{:#?}", parser);
+    parser.parse();
 
-    println!("{}", parser.ast.display_expr(expr1));
-    println!("{}", parser.ast.display_expr(expr2));
+    for stmt in parser.ast.stmts() {
+        print_stmt(stmt.clone(), &parser);
+    }
 
     let error_printer = ErrorPrinter::new(test_file, &test_data);
     for error in &parser.errors {
         error_printer.print(error);
+    }
+}
+
+fn print_stmt(stmt: ast::stmt::Stmt, parser: &parser::Parser) {
+    match stmt {
+        ast::stmt::Stmt::Expr(expr_id) => {
+            println!("expression:");
+            println!("{}", parser.ast.display_expr(expr_id))
+        }
+        ast::stmt::Stmt::VarDecl { name, value, .. } => {
+            let var_name = parser.ast.resolve_symbol(name);
+            println!("var {}:", var_name);
+            println!("{}", parser.ast.display_expr(value));
+        }
     }
 }

@@ -117,14 +117,14 @@ impl std::fmt::Display for ExprDisplay<'_> {
         let expr = self.ast.get_expr(self.expr_id);
         match &expr.kind {
             ExprKind::Identifier(symbol) => {
-                let name = self.ast.get_symbol(*symbol);
+                let name = self.ast.resolve_symbol(*symbol);
                 writeln!(f, "{}", name)
             }
             ExprKind::Integer(value) => {
                 writeln!(f, "{}", value)
             }
             ExprKind::String(symbol) => {
-                let s = self.ast.get_symbol(*symbol);
+                let s = self.ast.resolve_symbol(*symbol);
                 writeln!(f, "{:?}", s)
             }
             ExprKind::BinOp { op, lhs, rhs } => {
