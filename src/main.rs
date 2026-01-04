@@ -1,8 +1,8 @@
 use crate::parser::ParserError;
 
-pub mod ast;
-pub mod lexer;
-pub mod parser;
+mod ast;
+mod lexer;
+mod parser;
 
 pub struct ErrorPrinter<'input> {
     file: &'input str,
@@ -78,26 +78,12 @@ fn main() {
     let mut parser = parser::Parser::new(&test_data);
     parser.parse();
 
-    for stmt in parser.ast.stmts() {
-        print_stmt(stmt.clone(), &parser);
-    }
+    // for stmt in parser.ast.stmts() {
+    //     print_stmt(*stmt, &parser);
+    // }
 
     let error_printer = ErrorPrinter::new(test_file, &test_data);
     for error in &parser.errors {
         error_printer.print(error);
-    }
-}
-
-fn print_stmt(stmt: ast::stmt::Stmt, parser: &parser::Parser) {
-    match stmt {
-        ast::stmt::Stmt::Expr(expr_id) => {
-            println!("expression:");
-            println!("{}", parser.ast.display_expr(expr_id))
-        }
-        ast::stmt::Stmt::VarDecl { name, value, .. } => {
-            let var_name = parser.ast.resolve_symbol(name);
-            println!("var {}:", var_name);
-            println!("{}", parser.ast.display_expr(value));
-        }
     }
 }

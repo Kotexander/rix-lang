@@ -150,12 +150,6 @@ pub struct Token {
     pub kind: Tok,
     pub span: Span,
 }
-impl Token {
-    pub const DUMMY: Self = Token {
-        kind: Tok::Unknown,
-        span: Span { start: 0, end: 0 },
-    };
-}
 
 #[derive(Clone)]
 pub struct Lexer<'input> {
@@ -206,6 +200,7 @@ impl<'input> Lexer<'input> {
         false
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Token {
         loop {
             let start = self.location();
@@ -369,7 +364,7 @@ impl<'input> Lexer<'input> {
     }
 }
 
-/// A lexer wrapper that provides a sliding window of previous, current, and next tokens.
+/// A [Lexer] wrapper that provides a sliding window of previous, and next tokens.
 #[derive(Debug, Clone)]
 pub struct LexerWindow<'input> {
     lexer: Lexer<'input>,
