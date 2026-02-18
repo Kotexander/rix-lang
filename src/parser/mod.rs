@@ -1,9 +1,10 @@
 use crate::{
     ast::{
-        Ast, UniqueSymbol,
+        Ast,
         expr::{BinOp, ExprId, ExprKind, UniOp},
         item::{Arg, ArgKind, Item},
         stmt::{Stmt, StmtId},
+        symbols::SymbolId,
         typ::{TypeId, TypeKind},
     },
     lexer::{LexerWindow, Span, Tok, Token},
@@ -25,15 +26,14 @@ impl<'input> Parser<'input> {
     pub fn new(input: &'input str) -> Self {
         Parser {
             lexer: LexerWindow::new(input),
-            ast: Ast::new(),
+            ast: Ast::default(),
             errors: Vec::new(),
         }
     }
 
-    fn slice_symbol(&mut self, span: Span) -> UniqueSymbol {
+    fn slice_symbol(&mut self, span: Span) -> SymbolId {
         let s = self.lexer.slice(span);
-        let sym = self.ast.get_symbol(s);
-        UniqueSymbol::new(sym, span)
+        self.ast.symbols.add(s, span)
     }
 
     fn error(&mut self, message: impl Into<String>, span: Span) {
@@ -43,14 +43,16 @@ impl<'input> Parser<'input> {
         });
     }
 
-    fn expect(&mut self, tok: &[Tok]) -> Token {
-        let peek = *self.lexer.peek();
-        if tok.contains(&peek.kind) {
-            return self.lexer.advance();
+    fn expect(&mut self, toks: &[Tok]) -> Option<Token> {
+        let peek = self.lexer.peek();
+
+        if toks.contains(&peek.kind) {
+            return Some(self.lexer.advance());
         }
-        let msg = expect_msg(tok, &peek.kind);
+        let peek = *peek;
+        let msg = expect_msg(toks, &peek.kind);
         self.error(msg, self.lexer.prev().span.between(&peek.span));
-        peek
+        None
     }
 
     fn parse_group(&mut self) -> ExprId {
@@ -64,14 +66,15 @@ impl<'input> Parser<'input> {
             );
             return self
                 .ast
-                .add_expr(ExprKind::Error, lparen.span.join(&rparen.span));
+                .exprs
+                .add(ExprKind::Error, lparen.span.join(&rparen.span));
         }
 
         let expr = self.parse_expr();
 
         self.expect(&[Tok::RParen]);
 
-        self.ast.add_expr(
+        self.ast.exprs.add(
             ExprKind::Group(expr),
             lparen.span.join(&self.lexer.prev().span),
         )
@@ -81,26 +84,27 @@ impl<'input> Parser<'input> {
         match peek.kind {
             Tok::Number => {
                 let number = self.lexer.advance();
-                let expr = match self.lexer.slice(number.span).parse() {
+                let expr = match self.lexer.slice(number.span).parse::<i64>() {
                     Ok(n) => ExprKind::Integer(n),
                     Err(e) => {
                         self.error(format!("invalid integer literal: {}", e), number.span);
                         ExprKind::Error
                     }
                 };
-                self.ast.add_expr(expr, number.span)
+                self.ast.exprs.add(expr, number.span)
             }
             Tok::Identifier => {
                 let identifer = self.lexer.advance();
                 let symbol = self.slice_symbol(identifer.span);
                 self.ast
-                    .add_expr(ExprKind::Identifier(symbol), identifer.span)
+                    .exprs
+                    .add(ExprKind::Identifier(symbol), identifer.span)
             }
             Tok::String => {
                 // TODO: trim quotes and handle escape sequences
                 let string = self.lexer.advance();
                 let symbol = self.slice_symbol(string.span);
-                self.ast.add_expr(ExprKind::String(symbol), string.span)
+                self.ast.exprs.add(ExprKind::String(symbol), string.span)
             }
             Tok::LParen => self.parse_group(),
             _ => {
@@ -110,7 +114,7 @@ impl<'input> Parser<'input> {
                     token.span,
                 );
 
-                self.ast.add_expr(ExprKind::Error, token.span)
+                self.ast.exprs.add(ExprKind::Error, token.span)
             }
         }
     }
@@ -124,16 +128,16 @@ impl<'input> Parser<'input> {
             let err_span = lbracket.span.between(&rbracket.span);
             self.error("expected expression for index operation", err_span);
 
-            self.ast.add_expr(ExprKind::Error, err_span)
+            self.ast.exprs.add(ExprKind::Error, err_span)
         } else {
             let index = self.parse_expr();
             self.expect(&[Tok::RBracket]);
             index
         };
 
-        self.ast.add_expr(
+        self.ast.exprs.add(
             ExprKind::Index { base, index },
-            self.ast.get_expr(base).span.join(&self.lexer.prev().span),
+            self.ast.exprs[base].span.join(&self.lexer.prev().span),
         )
     }
     fn parse_call(&mut self, callee: ExprId) -> ExprId {
@@ -166,9 +170,10 @@ impl<'input> Parser<'input> {
                 }
             }
         }
-        self.ast.add_expr(
+        let args = self.ast.args.alloc(args);
+        self.ast.exprs.add(
             ExprKind::Call { callee, args },
-            self.ast.get_expr(callee).span.join(&self.lexer.prev().span),
+            self.ast.exprs[callee].span.join(&self.lexer.prev().span),
         )
     }
     fn parse_postfix_expr(&mut self) -> ExprId {
@@ -212,9 +217,9 @@ impl<'input> Parser<'input> {
 
         let mut expr = self.parse_postfix_expr();
         for (op, op_span) in ops.into_iter().rev() {
-            let expr_span = self.ast.get_expr(expr).span;
+            let expr_span = self.ast.exprs[expr].span;
             let span = op_span.join(&expr_span);
-            expr = self.ast.add_expr(ExprKind::UniOp { op, expr }, span);
+            expr = self.ast.exprs.add(ExprKind::UniOp { op, expr }, span);
         }
 
         expr
@@ -240,11 +245,11 @@ impl<'input> Parser<'input> {
 
             let rhs = self.parse_binop_expr(prec + 1);
 
-            let lhs_span = self.ast.get_expr(lhs).span;
-            let rhs_span = self.ast.get_expr(rhs).span;
+            let lhs_span = self.ast.exprs[lhs].span;
+            let rhs_span = self.ast.exprs[rhs].span;
             let span = lhs_span.join(&rhs_span);
 
-            lhs = self.ast.add_expr(ExprKind::BinOp { op, lhs, rhs }, span);
+            lhs = self.ast.exprs.add(ExprKind::BinOp { op, lhs, rhs }, span);
         }
 
         lhs
@@ -263,18 +268,19 @@ impl<'input> Parser<'input> {
                 let symbol = self.slice_symbol(identifer.span);
 
                 self.ast
-                    .add_type(TypeKind::Identifier(symbol), identifer.span)
+                    .types
+                    .add(TypeKind::Identifier(symbol), identifer.span)
             }
             Tok::Asterisk => {
                 let asterisk = self.lexer.advance();
                 let base_type = self.parse_type();
-                let span = asterisk.span.join(&self.ast.get_type(base_type).span);
-                self.ast.add_type(TypeKind::Ptr(base_type), span)
+                let span = asterisk.span.join(&self.ast.types[base_type].span);
+                self.ast.types.add(TypeKind::Ptr(base_type), span)
             }
             _ => {
                 let peek = *peek;
                 self.error(format!("expected type, but found {}", peek.kind), peek.span);
-                self.ast.add_type(TypeKind::Error, peek.span)
+                self.ast.types.add(TypeKind::Error, peek.span)
             }
         }
     }
@@ -297,19 +303,19 @@ impl<'input> Parser<'input> {
                 self.expect(&[Tok::Semicolon]);
 
                 Stmt::VarDecl {
-                    name: self.slice_symbol(name.span),
+                    name: name.map(|n| self.slice_symbol(n.span)).unwrap(),
                     value: expr,
                     typ,
                 }
             }
             Tok::Return => {
                 let _return = self.lexer.advance();
-                let expr = if self.lexer.match_(Tok::Semicolon).is_err() {
+                let expr = if self.lexer.match_(Tok::Semicolon).is_ok() {
+                    None
+                } else {
                     let expr = self.parse_expr();
                     self.expect(&[Tok::Semicolon]);
                     Some(expr)
-                } else {
-                    None
                 };
                 Stmt::Return(expr)
             }
@@ -319,7 +325,7 @@ impl<'input> Parser<'input> {
                 Stmt::Expr(expr)
             }
         };
-        self.ast.add_stmt(stmt)
+        self.ast.stmts.alloc(stmt)
     }
 
     pub fn parse(&mut self) {
@@ -329,7 +335,7 @@ impl<'input> Parser<'input> {
                 Tok::Fun => {
                     let _fun = self.lexer.advance();
                     let name = self.expect(&[Tok::Identifier]);
-                    let name_symbol = self.slice_symbol(name.span);
+                    let name_symbol = name.map(|n| self.slice_symbol(n.span)).unwrap();
                     self.expect(&[Tok::LParen]);
 
                     let mut args = Vec::new();
@@ -339,7 +345,7 @@ impl<'input> Parser<'input> {
                         }
 
                         let arg_name = self.expect(&[Tok::Identifier]);
-                        let arg_symbol = self.slice_symbol(arg_name.span);
+                        let arg_symbol = arg_name.map(|n| self.slice_symbol(n.span)).unwrap();
                         self.expect(&[Tok::Colon]);
 
                         let arg = if let Ok(elip) = self.lexer.match_(Tok::DotDotDot) {
@@ -396,7 +402,7 @@ impl<'input> Parser<'input> {
                         None
                     };
 
-                    self.ast.add_item(Item::Function {
+                    self.ast.items.alloc(Item::Function {
                         name: name_symbol,
                         args,
                         rett,

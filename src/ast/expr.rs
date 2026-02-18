@@ -1,25 +1,50 @@
-use super::UniqueSymbol;
+use super::arena::{Arena, ArenaId};
+use super::symbols::SymbolId;
 use crate::lexer;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ExprId(pub(super) u32);
+pub type ExprArena = Arena<Expr>;
+pub type ExprId = ArenaId<Expr>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl ExprArena {
+    pub fn add(&mut self, kind: ExprKind, span: lexer::Span) -> ExprId {
+        self.alloc(Expr::new(kind, span))
+    }
+}
+
+pub type ArgList = Vec<ExprId>;
+pub type ArgListArena = Arena<ArgList>;
+pub type ArgListId = ArenaId<ArgList>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExprKind {
-    Identifier(UniqueSymbol),
+    Identifier(SymbolId),
+    /// TODO: dont use i64
     Integer(i64),
-    String(UniqueSymbol),
+    String(SymbolId),
 
     Group(ExprId),
-    BinOp { op: BinOp, lhs: ExprId, rhs: ExprId },
-    UniOp { op: UniOp, expr: ExprId },
-    Index { base: ExprId, index: ExprId },
-    Call { callee: ExprId, args: Vec<ExprId> },
+    BinOp {
+        op: BinOp,
+        lhs: ExprId,
+        rhs: ExprId,
+    },
+    UniOp {
+        op: UniOp,
+        expr: ExprId,
+    },
+    Index {
+        base: ExprId,
+        index: ExprId,
+    },
+    Call {
+        callee: ExprId,
+        args: ArgListId,
+    },
 
     Error,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Expr {
     pub kind: ExprKind,
     pub span: lexer::Span,

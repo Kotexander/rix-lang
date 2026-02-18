@@ -1,12 +1,19 @@
-use super::UniqueSymbol;
+use super::arena::{Arena, ArenaId};
+use super::symbols::SymbolId;
 use crate::lexer;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TypeId(pub(super) u32);
+pub type TypeArena = Arena<Type>;
+pub type TypeId = ArenaId<Type>;
+
+impl TypeArena {
+    pub fn add(&mut self, kind: TypeKind, span: lexer::Span) -> TypeId {
+        self.alloc(Type::new(kind, span))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeKind {
-    Identifier(UniqueSymbol),
+    Identifier(SymbolId),
     Ptr(TypeId),
     Error,
 }
