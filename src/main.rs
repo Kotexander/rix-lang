@@ -71,17 +71,10 @@ fn test() {
 
     let mut parser = parser::Parser::new(&test_data);
     parser.parse();
-    // dbg!(parser.parse_stmt(&mut errors));
-    // dbg!(parser.parse_stmt(&mut errors));
 
-    // let ast = parser.finish();
     let (ast, errors) = parser.finish();
 
-    // for stmt in parser.ast.stmts() {
-    //     print_stmt(*stmt, &parser);
-    // }
-    //
-    println!("Parsed AST: {:#?}", ast);
+    println!("Parsed AST:\n{}", ast);
 
     let error_printer = ErrorPrinter::new(test_file, &test_data);
     for error in &errors {

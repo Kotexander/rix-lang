@@ -41,6 +41,19 @@ impl<T> Arena<T> {
         self.items.get(id.0 as usize)
     }
 }
+impl<'a, T> IntoIterator for &'a Arena<T> {
+    type Item = (ArenaId<T>, &'a T);
+    type IntoIter = std::iter::Map<
+        std::iter::Enumerate<std::slice::Iter<'a, T>>,
+        fn((usize, &'a T)) -> Self::Item,
+    >;
+    fn into_iter(self) -> Self::IntoIter {
+        self.items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| (ArenaId(i as u32, std::marker::PhantomData), item))
+    }
+}
 impl<T> std::ops::Index<ArenaId<T>> for Arena<T> {
     type Output = T;
     fn index(&self, id: ArenaId<T>) -> &Self::Output {

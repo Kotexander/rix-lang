@@ -2,6 +2,7 @@ pub mod arena;
 pub mod expr;
 pub mod idents;
 pub mod item;
+mod printer;
 pub mod stmt;
 pub mod typ;
 
@@ -18,4 +19,10 @@ pub struct Ast {
     pub items: ItemArena,
     pub types: TypeArena,
     pub idents: Idents,
+}
+impl std::fmt::Display for Ast {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let printer = printer::AstPrinter::new(self);
+        printer.fmt(f)
+    }
 }
