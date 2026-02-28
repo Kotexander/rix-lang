@@ -1,5 +1,5 @@
 use super::arena::{Arena, ArenaId};
-use super::symbols::SymbolId;
+use super::idents::IdentId;
 use crate::lexer;
 
 pub type ExprArena = Arena<Expr>;
@@ -11,40 +11,20 @@ impl ExprArena {
     }
 }
 
-pub type ArgList = Vec<ExprId>;
-pub type ArgListArena = Arena<ArgList>;
-pub type ArgListId = ArenaId<ArgList>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExprKind {
-    Identifier(SymbolId),
-    /// TODO: dont use i64
-    Integer(i64),
-    String(SymbolId),
+    Identifier(IdentId),
+    Integer(IdentId),
+    String(IdentId),
 
     Group(ExprId),
-    BinOp {
-        op: BinOp,
-        lhs: ExprId,
-        rhs: ExprId,
-    },
-    UniOp {
-        op: UniOp,
-        expr: ExprId,
-    },
-    Index {
-        base: ExprId,
-        index: ExprId,
-    },
-    Call {
-        callee: ExprId,
-        args: ArgListId,
-    },
-
-    Error,
+    BinOp { op: BinOp, lhs: ExprId, rhs: ExprId },
+    UniOp { op: UniOp, expr: ExprId },
+    Index { base: ExprId, index: ExprId },
+    Call { callee: ExprId, args: Vec<ExprId> },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expr {
     pub kind: ExprKind,
     pub span: lexer::Span,

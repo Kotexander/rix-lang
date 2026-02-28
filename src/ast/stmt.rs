@@ -1,5 +1,5 @@
 use super::arena::{Arena, ArenaId};
-use super::symbols::SymbolId;
+use super::idents::IdentId;
 use super::{expr, typ};
 
 pub type StmtArena = Arena<Stmt>;
@@ -9,8 +9,8 @@ pub type StmtId = ArenaId<Stmt>;
 pub enum Stmt {
     Expr(expr::ExprId),
     VarDecl {
-        name: SymbolId,
-        value: expr::ExprId,
+        ident: IdentId,
+        expr: expr::ExprId,
         typ: Option<typ::TypeId>,
     },
     Return(Option<expr::ExprId>),

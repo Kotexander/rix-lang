@@ -1,5 +1,5 @@
 use super::arena::{Arena, ArenaId};
-use super::symbols::SymbolId;
+use super::idents::IdentId;
 use crate::lexer;
 
 pub type TypeArena = Arena<Type>;
@@ -13,9 +13,8 @@ impl TypeArena {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeKind {
-    Identifier(SymbolId),
+    Identifier(IdentId),
     Ptr(TypeId),
-    Error,
 }
 
 #[derive(Debug, Clone, Copy)]

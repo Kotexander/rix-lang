@@ -2,231 +2,250 @@ use crate::{
     ast::{
         Ast,
         expr::{BinOp, ExprId, ExprKind, UniOp},
-        item::{Arg, ArgKind, Item},
+        idents::IdentId,
+        item::{Item, ItemId, Param, ParamType},
         stmt::{Stmt, StmtId},
-        symbols::SymbolId,
         typ::{TypeId, TypeKind},
     },
     lexer::{LexerWindow, Span, Tok, Token},
 };
-
 #[derive(Debug)]
 pub struct ParserError {
     pub message: String,
     pub span: Span,
 }
+pub struct ParserErrors {
+    errors: Vec<ParserError>,
+}
+impl ParserErrors {
+    pub fn new() -> Self {
+        Self { errors: Vec::new() }
+    }
 
-#[derive(Debug)]
+    pub fn add(&mut self, message: impl Into<String>, span: Span) {
+        if let Some(last) = self.errors.last()
+            && last.span == span
+        {
+            // don't add duplicate errors for the same span
+            return;
+        }
+        self.errors.push(ParserError {
+            message: message.into(),
+            span,
+        });
+    }
+}
+
 pub struct Parser<'input> {
     lexer: LexerWindow<'input>,
-    pub ast: Ast,
-    pub errors: Vec<ParserError>,
+    ast: Ast,
+    errors: ParserErrors,
 }
 impl<'input> Parser<'input> {
     pub fn new(input: &'input str) -> Self {
         Parser {
             lexer: LexerWindow::new(input),
             ast: Ast::default(),
-            errors: Vec::new(),
+            errors: ParserErrors::new(),
+        }
+    }
+    pub fn finish(self) -> (Ast, Vec<ParserError>) {
+        (self.ast, self.errors.errors)
+    }
+
+    fn slice_ident(&mut self, span: Span) -> IdentId {
+        let ident = self.lexer.slice(span);
+        self.ast.idents.add(ident, span)
+    }
+
+    fn expect_tokens(&mut self, expected: &[Tok]) -> Result<Token, ()> {
+        let peek = *self.lexer.peek();
+        if expected.contains(&peek.kind) {
+            Ok(self.lexer.advance())
+        } else {
+            self.errors.add(expect_msg(expected, &peek.kind), peek.span);
+            Err(())
         }
     }
 
-    fn slice_symbol(&mut self, span: Span) -> SymbolId {
-        let s = self.lexer.slice(span);
-        self.ast.symbols.add(s, span)
+    pub fn parse(&mut self) {
+        while self.lexer.peek().kind != Tok::Eof {
+            if self.parse_item().is_err() {
+                self.find_next_item();
+            }
+        }
     }
-
-    fn error(&mut self, message: impl Into<String>, span: Span) {
-        self.errors.push(ParserError {
-            message: message.into(),
-            span,
-        });
-    }
-
-    fn expect(&mut self, toks: &[Tok]) -> Option<Token> {
+}
+// Type
+impl<'input> Parser<'input> {
+    /// Type
+    ///     = identifier
+    ///     | "*" Type
+    pub fn parse_type(&mut self) -> Result<TypeId, ()> {
         let peek = self.lexer.peek();
+        match peek.kind {
+            Tok::Identifier => {
+                let identifier = self.lexer.advance();
+                let ident = self.slice_ident(identifier.span);
 
-        if toks.contains(&peek.kind) {
-            return Some(self.lexer.advance());
+                Ok(self
+                    .ast
+                    .types
+                    .add(TypeKind::Identifier(ident), identifier.span))
+            }
+            Tok::Asterisk => {
+                let asterisk = self.lexer.advance().span;
+                let inner_type = self.parse_type()?;
+                let span = asterisk.join(&self.ast.types[inner_type].span);
+                Ok(self.ast.types.add(TypeKind::Ptr(inner_type), span))
+            }
+            _ => {
+                self.errors
+                    .add(format!("expected type, but found {}", peek.kind), peek.span);
+                Err(())
+            }
         }
-        let peek = *peek;
-        let msg = expect_msg(toks, &peek.kind);
-        self.error(msg, self.lexer.prev().span.between(&peek.span));
-        None
+    }
+}
+// Expr
+impl<'input> Parser<'input> {
+    pub fn parse_expr(&mut self) -> Result<ExprId, ()> {
+        self.parse_binop_expr(0)
     }
 
-    fn parse_group(&mut self) -> ExprId {
-        let lparen = self.lexer.advance();
-        debug_assert_eq!(lparen.kind, Tok::LParen);
-
-        if let Ok(rparen) = self.lexer.match_(Tok::RParen) {
-            self.error(
-                "expected expression inside parenthesis",
-                lparen.span.between(&rparen.span),
-            );
-            return self
-                .ast
-                .exprs
-                .add(ExprKind::Error, lparen.span.join(&rparen.span));
-        }
-
-        let expr = self.parse_expr();
-
-        self.expect(&[Tok::RParen]);
-
-        self.ast.exprs.add(
-            ExprKind::Group(expr),
-            lparen.span.join(&self.lexer.prev().span),
-        )
-    }
-    fn parse_term(&mut self) -> ExprId {
+    /// Term
+    ///     = number
+    ///     | identifier
+    ///     | string
+    ///     | "(" Expr ")"
+    pub fn parse_term(&mut self) -> Result<ExprId, ()> {
         let peek = self.lexer.peek();
         match peek.kind {
             Tok::Number => {
                 let number = self.lexer.advance();
-                let expr = match self.lexer.slice(number.span).parse::<i64>() {
-                    Ok(n) => ExprKind::Integer(n),
-                    Err(e) => {
-                        self.error(format!("invalid integer literal: {}", e), number.span);
-                        ExprKind::Error
-                    }
-                };
-                self.ast.exprs.add(expr, number.span)
+                let kind = ExprKind::Integer(self.slice_ident(number.span));
+                Ok(self.ast.exprs.add(kind, number.span))
             }
             Tok::Identifier => {
                 let identifer = self.lexer.advance();
-                let symbol = self.slice_symbol(identifer.span);
-                self.ast
+                let ident = self.slice_ident(identifer.span);
+                Ok(self
+                    .ast
                     .exprs
-                    .add(ExprKind::Identifier(symbol), identifer.span)
+                    .add(ExprKind::Identifier(ident), identifer.span))
             }
             Tok::String => {
-                // TODO: trim quotes and handle escape sequences
                 let string = self.lexer.advance();
-                let symbol = self.slice_symbol(string.span);
-                self.ast.exprs.add(ExprKind::String(symbol), string.span)
+                let ident = self.slice_ident(string.span);
+                Ok(self.ast.exprs.add(ExprKind::String(ident), string.span))
             }
-            Tok::LParen => self.parse_group(),
+            Tok::LParen => {
+                let lparen = self.lexer.advance().span;
+                let expr = self.parse_expr()?;
+                let rparen = self.expect_tokens(&[Tok::RParen])?.span;
+                Ok(self
+                    .ast
+                    .exprs
+                    .add(ExprKind::Group(expr), lparen.join(&rparen)))
+            }
             _ => {
-                let token = self.lexer.advance();
-                self.error(
-                    format!("expected expression, but found {}", token.kind),
-                    token.span,
+                let peek = *peek;
+                self.errors.add(
+                    format!("expected an expression, but found {}", peek.kind),
+                    peek.span,
                 );
-
-                self.ast.exprs.add(ExprKind::Error, token.span)
+                Err(())
             }
         }
     }
-
-    fn parse_index(&mut self, base: ExprId) -> ExprId {
-        let lbracket = self.lexer.advance();
-        debug_assert_eq!(lbracket.kind, Tok::LBracket);
-
-        // handle empty index
-        let index = if let Ok(rbracket) = self.lexer.match_(Tok::RBracket) {
-            let err_span = lbracket.span.between(&rbracket.span);
-            self.error("expected expression for index operation", err_span);
-
-            self.ast.exprs.add(ExprKind::Error, err_span)
-        } else {
-            let index = self.parse_expr();
-            self.expect(&[Tok::RBracket]);
-            index
-        };
-
-        self.ast.exprs.add(
-            ExprKind::Index { base, index },
-            self.ast.exprs[base].span.join(&self.lexer.prev().span),
-        )
-    }
-    fn parse_call(&mut self, callee: ExprId) -> ExprId {
-        let lparen = self.lexer.advance();
-        debug_assert_eq!(lparen.kind, Tok::LParen);
-
-        let mut args = Vec::new();
-        loop {
-            if self.lexer.match_(Tok::RParen).is_ok() {
-                break;
-            }
-
-            args.push(self.parse_expr());
-
-            match self.lexer.peek().kind {
-                Tok::Comma => {
-                    self.lexer.advance();
-                }
-                Tok::RParen => {
-                    let _rparen = self.lexer.advance();
-                    break;
-                }
-                _ => {
-                    let peek = *self.lexer.peek();
-                    self.error(
-                        expect_msg(&[Tok::Comma, Tok::RParen], &peek.kind),
-                        peek.span,
-                    );
-                    break;
-                }
-            }
-        }
-        let args = self.ast.args.alloc(args);
-        self.ast.exprs.add(
-            ExprKind::Call { callee, args },
-            self.ast.exprs[callee].span.join(&self.lexer.prev().span),
-        )
-    }
-    fn parse_postfix_expr(&mut self) -> ExprId {
-        let mut expr = self.parse_term();
+    /// SuffixExpr
+    ///     = Term (Index | FnCallArgs)*
+    ///
+    /// Index
+    ///     = "\[" Expr "\]"
+    ///
+    /// FnCallArgs
+    ///     = "(" (Expr ",")* Expr? ")"
+    fn parse_suffix_expr(&mut self) -> Result<ExprId, ()> {
+        let mut expr = self.parse_term()?;
 
         loop {
             let peek = self.lexer.peek();
             match peek.kind {
                 Tok::LBracket => {
-                    expr = self.parse_index(expr);
+                    let lbracket = self.lexer.advance().span;
+                    let index = self.parse_expr()?;
+                    let rbracket = self.expect_tokens(&[Tok::RBracket])?.span;
+                    expr = self.ast.exprs.add(
+                        ExprKind::Index { base: expr, index },
+                        self.ast.exprs[expr].span.join(&lbracket).join(&rbracket),
+                    );
                 }
                 Tok::LParen => {
-                    expr = self.parse_call(expr);
+                    self.lexer.advance(); // lparen
+
+                    let mut args = Vec::new();
+                    while self.lexer.peek().kind != Tok::RParen {
+                        let arg = self.parse_expr()?;
+                        args.push(arg);
+
+                        let peek = self.lexer.peek();
+                        match peek.kind {
+                            Tok::RParen => break,
+                            Tok::Comma => {
+                                self.lexer.advance();
+                            }
+                            Tok::RBrace | Tok::RBracket | Tok::Colon | Tok::Eof => {
+                                let peek = *self.lexer.peek();
+                                self.errors.add(
+                                    expect_msg(&[Tok::Comma, Tok::RParen], &peek.kind),
+                                    peek.span,
+                                );
+                                return Err(());
+                            }
+                            _ => {
+                                // assume there was a missing comma and try to continue parsing
+                                self.errors.add(
+                                    format!("expected {} after argument", Tok::Comma),
+                                    peek.span,
+                                );
+                            }
+                        }
+                    }
+                    // next token should be rparen
+                    let rparen = self.lexer.advance().span;
+                    expr = self.ast.exprs.add(
+                        ExprKind::Call { callee: expr, args },
+                        self.ast.exprs[expr].span.join(&rparen),
+                    );
                 }
                 _ => break,
             }
         }
-        expr
+        Ok(expr)
+    }
+    /// PrefixExpr
+    ///     = PrefixOp* SuffixExpr
+    ///
+    /// PrefixOp
+    ///     = "-" | "!" | "&" | "*"
+    fn parse_prefix_expr(&mut self) -> Result<ExprId, ()> {
+        let peek = self.lexer.peek();
+        let op = match peek.kind {
+            Tok::Minus => UniOp::Neg,
+            Tok::Bang => UniOp::Not,
+            Tok::Ampersand => UniOp::Ref,
+            Tok::Asterisk => UniOp::Deref,
+            _ => return self.parse_suffix_expr(),
+        };
+        let op_token = self.lexer.advance();
+        let expr = self.parse_prefix_expr()?;
+        let span = op_token.span.join(&self.ast.exprs[expr].span);
+        Ok(self.ast.exprs.add(ExprKind::UniOp { op, expr }, span))
     }
 
-    fn parse_unary_expr(&mut self) -> ExprId {
-        // TODO: use small vec instead of allocating right away
-        let mut ops = vec![];
-        loop {
-            let peek = self.lexer.peek();
-            match peek.kind {
-                Tok::Minus | Tok::Bang | Tok::Ampersand | Tok::Asterisk => {
-                    let next = self.lexer.advance();
-                    let op = match next.kind {
-                        Tok::Minus => UniOp::Neg,
-                        Tok::Bang => UniOp::Not,
-                        Tok::Ampersand => UniOp::Ref,
-                        Tok::Asterisk => UniOp::Deref,
-                        _ => unreachable!(),
-                    };
-                    ops.push((op, next.span));
-                }
-                _ => break,
-            }
-        }
-
-        let mut expr = self.parse_postfix_expr();
-        for (op, op_span) in ops.into_iter().rev() {
-            let expr_span = self.ast.exprs[expr].span;
-            let span = op_span.join(&expr_span);
-            expr = self.ast.exprs.add(ExprKind::UniOp { op, expr }, span);
-        }
-
-        expr
-    }
-
-    fn parse_binop_expr(&mut self, min_prec: u8) -> ExprId {
-        let mut lhs = self.parse_unary_expr();
+    fn parse_binop_expr(&mut self, min_prec: u8) -> Result<ExprId, ()> {
+        let mut lhs = self.parse_prefix_expr()?;
 
         loop {
             let peek = self.lexer.peek();
@@ -243,7 +262,9 @@ impl<'input> Parser<'input> {
             }
             let _op_token = self.lexer.advance();
 
-            let rhs = self.parse_binop_expr(prec + 1);
+            let Ok(rhs) = self.parse_binop_expr(prec + 1) else {
+                return Ok(lhs);
+            };
 
             let lhs_span = self.ast.exprs[lhs].span;
             let rhs_span = self.ast.exprs[rhs].span;
@@ -252,186 +273,220 @@ impl<'input> Parser<'input> {
             lhs = self.ast.exprs.add(ExprKind::BinOp { op, lhs, rhs }, span);
         }
 
-        lhs
+        Ok(lhs)
     }
+}
+// Stmt
+impl<'input> Parser<'input> {
+    /// VarDecl
+    ///     = "var" identifier (":" Type)? "=" Expr ";"
+    pub fn parse_var(&mut self) -> Result<StmtId, ()> {
+        let _var = self.expect_tokens(&[Tok::Var])?;
 
-    fn parse_expr(&mut self) -> ExprId {
-        self.parse_binop_expr(0)
+        let ident_tok = self.expect_tokens(&[Tok::Identifier])?;
+        let typ = if self.lexer.match_(Tok::Colon).is_ok() {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        let _equal = self.expect_tokens(&[Tok::Equal])?;
+        let expr = self.parse_expr()?;
+        let _semicolon = self.expect_tokens(&[Tok::Semicolon])?;
+
+        let ident = self.slice_ident(ident_tok.span);
+        Ok(self.ast.stmts.alloc(Stmt::VarDecl { ident, expr, typ }))
     }
-
-    fn parse_type(&mut self) -> TypeId {
-        // TODO: dont use recursion for base types
+    /// Stmt
+    ///    = VarDecl
+    ///    | Expr ";"
+    ///    | Return (Expr)? ";"
+    pub fn parse_stmt(&mut self) -> Result<StmtId, ()> {
         let peek = self.lexer.peek();
         match peek.kind {
-            Tok::Identifier => {
-                let identifer = self.lexer.advance();
-                let symbol = self.slice_symbol(identifer.span);
-
-                self.ast
-                    .types
-                    .add(TypeKind::Identifier(symbol), identifer.span)
-            }
-            Tok::Asterisk => {
-                let asterisk = self.lexer.advance();
-                let base_type = self.parse_type();
-                let span = asterisk.span.join(&self.ast.types[base_type].span);
-                self.ast.types.add(TypeKind::Ptr(base_type), span)
+            Tok::Var => self.parse_var(),
+            Tok::Return => {
+                let _return = self.lexer.advance();
+                let expr = if self.lexer.peek().kind != Tok::Semicolon {
+                    Some(self.parse_expr()?)
+                } else {
+                    None
+                };
+                let _semicolon = self.expect_tokens(&[Tok::Semicolon])?;
+                Ok(self.ast.stmts.alloc(Stmt::Return(expr)))
             }
             _ => {
-                let peek = *peek;
-                self.error(format!("expected type, but found {}", peek.kind), peek.span);
-                self.ast.types.add(TypeKind::Error, peek.span)
+                let expr = self.parse_expr()?;
+                let _semicolon = self.expect_tokens(&[Tok::Semicolon])?;
+                Ok(self.ast.stmts.alloc(Stmt::Expr(expr)))
             }
         }
     }
-
-    fn parse_stmt(&mut self) -> StmtId {
-        let peek = self.lexer.peek();
-        let stmt = match peek.kind {
-            Tok::Var => {
-                let _var = self.lexer.advance();
-                let name = self.expect(&[Tok::Identifier]);
-
-                let typ = if self.lexer.match_(Tok::Colon).is_ok() {
-                    Some(self.parse_type())
-                } else {
-                    None
-                };
-
-                self.expect(&[Tok::Equal]);
-                let expr = self.parse_expr();
-                self.expect(&[Tok::Semicolon]);
-
-                Stmt::VarDecl {
-                    name: name.map(|n| self.slice_symbol(n.span)).unwrap(),
-                    value: expr,
-                    typ,
-                }
-            }
-            Tok::Return => {
-                let _return = self.lexer.advance();
-                let expr = if self.lexer.match_(Tok::Semicolon).is_ok() {
-                    None
-                } else {
-                    let expr = self.parse_expr();
-                    self.expect(&[Tok::Semicolon]);
-                    Some(expr)
-                };
-                Stmt::Return(expr)
-            }
-            _ => {
-                let expr = self.parse_expr();
-                self.expect(&[Tok::Semicolon]);
-                Stmt::Expr(expr)
-            }
-        };
-        self.ast.stmts.alloc(stmt)
-    }
-
-    pub fn parse(&mut self) {
+    fn find_next_stmt(&mut self) {
+        let mut level = 0u32;
         loop {
-            let peek = *self.lexer.peek();
+            let peek = self.lexer.peek();
             match peek.kind {
-                Tok::Fun => {
-                    let _fun = self.lexer.advance();
-                    let name = self.expect(&[Tok::Identifier]);
-                    let name_symbol = name.map(|n| self.slice_symbol(n.span)).unwrap();
-                    self.expect(&[Tok::LParen]);
-
-                    let mut args = Vec::new();
-                    loop {
-                        if self.lexer.match_(Tok::RParen).is_ok() {
-                            break;
-                        }
-
-                        let arg_name = self.expect(&[Tok::Identifier]);
-                        let arg_symbol = arg_name.map(|n| self.slice_symbol(n.span)).unwrap();
-                        self.expect(&[Tok::Colon]);
-
-                        let arg = if let Ok(elip) = self.lexer.match_(Tok::DotDotDot) {
-                            Arg::new(ArgKind::Variadic(elip.span), arg_symbol)
-                        } else {
-                            let typ = self.parse_type();
-                            Arg::new(ArgKind::Type(typ), arg_symbol)
-                        };
-                        args.push(arg);
-
-                        match self.lexer.peek().kind {
-                            Tok::Comma => {
-                                self.lexer.advance();
-                            }
-                            Tok::RParen => {
-                                let _rparen = self.lexer.advance();
-                                break;
-                            }
-                            _ => {
-                                let peek = *self.lexer.peek();
-                                self.error(
-                                    expect_msg(&[Tok::Comma, Tok::RParen], &peek.kind),
-                                    peek.span,
-                                );
-                                break;
-                            }
-                        }
+                Tok::LBrace => {
+                    self.lexer.advance();
+                    level += 1
+                }
+                Tok::RBrace => {
+                    self.lexer.advance();
+                    if level == 0 {
+                        break;
                     }
-
-                    let rett = if self.lexer.match_(Tok::Colon).is_ok() {
-                        Some(self.parse_type())
-                    } else {
-                        None
-                    };
-
-                    let body = if self.lexer.match_(Tok::LBrace).is_ok() {
-                        let mut stmts = Vec::new();
-                        loop {
-                            if self.lexer.match_(Tok::RBrace).is_ok() {
-                                break;
-                            }
-                            stmts.push(self.parse_stmt())
-                        }
-                        Some(stmts)
-                    } else if self.lexer.match_(Tok::Semicolon).is_ok() {
-                        // function declaration without body
-                        None
-                    } else {
-                        let peek = *self.lexer.peek();
-                        self.error(
-                            expect_msg(&[Tok::LBrace, Tok::Semicolon], &peek.kind),
-                            self.lexer.prev().span.between(&peek.span),
-                        );
-                        None
-                    };
-
-                    self.ast.items.alloc(Item::Function {
-                        name: name_symbol,
-                        args,
-                        rett,
-                        body,
-                    });
+                    level -= 1;
+                }
+                Tok::Semicolon => {
+                    self.lexer.advance();
+                    if level == 0 {
+                        break;
+                    }
                 }
                 Tok::Eof => break,
                 _ => {
                     self.lexer.advance();
-                    self.error("expected an item", peek.span);
                 }
             }
         }
     }
-}
+    /// Block
+    ///     = "{" Stmt* "}"
+    pub fn parse_block(&mut self) -> Result<Vec<StmtId>, ()> {
+        let _lbrace = self.expect_tokens(&[Tok::LBrace]);
+        let mut stmts = vec![];
 
-fn expect_msg(toks: &[Tok], found: &Tok) -> String {
-    let mut msg = String::from("expected ");
-    for (i, t) in toks.iter().enumerate() {
-        if i > 0 && i != toks.len() - 1 {
-            msg.push_str(", ");
+        while self.lexer.peek().kind != Tok::Eof {
+            let stmt = self.parse_stmt();
+            if let Ok(stmt) = stmt {
+                stmts.push(stmt);
+            } else {
+                self.find_next_stmt();
+            }
+            if matches!(self.lexer.peek().kind, Tok::RBrace | Tok::Eof) {
+                break;
+            }
         }
-        if i == toks.len() - 1 && i != 0 {
-            msg.push_str(" or ");
-        }
-        msg.push_str(&t.to_string());
+        let _rbrace = self.expect_tokens(&[Tok::RBrace])?;
+        Ok(stmts)
     }
-    msg.push_str(&format!(", but found {}", found));
-    msg
+}
+// Item
+impl<'input> Parser<'input> {
+    /// ParamList
+    ///     = "(" (identifier ":" Type ",")* (identifier ":" Type)? ")"
+    fn parse_param_list(&mut self) -> Result<Vec<Param>, ()> {
+        let _lparen = self.expect_tokens(&[Tok::LParen])?;
+        let mut params = Vec::new();
+
+        while self.lexer.peek().kind != Tok::RParen {
+            let ident_tok = self.expect_tokens(&[Tok::Identifier])?;
+            let _colon = self.expect_tokens(&[Tok::Colon])?;
+
+            let typ = if let Ok(dotdotdot) = self.lexer.match_(Tok::DotDotDot) {
+                ParamType::Variadic(dotdotdot)
+            } else {
+                ParamType::Type(self.parse_type()?)
+            };
+
+            let ident = self.slice_ident(ident_tok.span);
+            params.push(Param::new(typ, ident));
+
+            let peek = self.lexer.peek();
+            match peek.kind {
+                Tok::RParen => break,
+                Tok::Comma => {
+                    self.lexer.advance();
+                }
+                Tok::Identifier => {
+                    // assume there was a missing comma and try to continue parsing
+                    self.errors.add(
+                        format!("expected {} after parameter", Tok::Comma),
+                        peek.span,
+                    );
+                }
+                _ => {
+                    self.errors.add(
+                        expect_msg(&[Tok::Comma, Tok::RParen], &peek.kind),
+                        peek.span,
+                    );
+                    return Err(());
+                }
+            }
+        }
+        // next token should be rparen
+        let _rparen = self.lexer.advance();
+
+        Ok(params)
+    }
+    /// Fun
+    ///     = "fun" identifier ParamList (":" Type)? (Block | ";")
+    pub fn parse_fun(&mut self) -> Result<ItemId, ()> {
+        let _fun = self.expect_tokens(&[Tok::Fun])?;
+        let ident_tok = self.expect_tokens(&[Tok::Identifier])?;
+        let params = self.parse_param_list()?;
+        let rett = if let Ok(_colon) = self.lexer.match_(Tok::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+        let body = if let Ok(_semicolon) = self.lexer.match_(Tok::Semicolon) {
+            None
+        } else {
+            Some(self.parse_block()?)
+        };
+        let ident = self.slice_ident(ident_tok.span);
+        Ok(self.ast.items.alloc(Item::Fun {
+            ident,
+            params,
+            rett,
+            body,
+        }))
+    }
+
+    pub fn parse_item(&mut self) -> Result<ItemId, ()> {
+        let peek = self.lexer.peek();
+        match peek.kind {
+            Tok::Fun => self.parse_fun(),
+            _ => {
+                let peek = *peek;
+                self.errors.add(
+                    format!("expected an item, but found {}", peek.kind),
+                    peek.span,
+                );
+                Err(())
+            }
+        }
+    }
+
+    fn find_next_item(&mut self) {
+        let mut level = 0u32;
+        loop {
+            let peek = self.lexer.peek();
+            match peek.kind {
+                Tok::Fun => {
+                    if level == 0 {
+                        break;
+                    }
+                }
+                Tok::LBrace => {
+                    self.lexer.advance();
+                    level += 1
+                }
+                Tok::RBrace => {
+                    self.lexer.advance();
+                    if level == 0 {
+                        break;
+                    }
+                    level -= 1;
+                }
+                Tok::Eof => break,
+                _ => {
+                    self.lexer.advance();
+                }
+            }
+        }
+    }
 }
 
 fn bin_op_from_tok(tok: &Tok) -> Option<BinOp> {
@@ -471,4 +526,19 @@ fn bin_op_precedence(op: BinOp) -> u8 {
         BinOp::Add | BinOp::Sub => 9,
         BinOp::Mul | BinOp::Div | BinOp::Rem => 10,
     }
+}
+
+fn expect_msg(toks: &[Tok], found: &Tok) -> String {
+    let mut msg = String::from("expected ");
+    for (i, t) in toks.iter().enumerate() {
+        if i > 0 && i != toks.len() - 1 {
+            msg.push_str(", ");
+        }
+        if i == toks.len() - 1 && i != 0 {
+            msg.push_str(" or ");
+        }
+        msg.push_str(&t.to_string());
+    }
+    msg.push_str(&format!(", but found {}", found));
+    msg
 }

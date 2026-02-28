@@ -55,11 +55,6 @@ pub enum Tok {
 
     Eof,
 }
-impl Tok {
-    pub fn is_eof(self) -> bool {
-        self == Tok::Eof
-    }
-}
 impl std::fmt::Display for Tok {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -98,7 +93,6 @@ impl std::fmt::Display for Tok {
             Tok::Comma => write!(f, "`,`"),
             Tok::Colon => write!(f, "`:`"),
             Tok::Semicolon => write!(f, "`;`"),
-            Tok::Unknown => write!(f, "unknown character"),
             Tok::Fun => write!(f, "`fun`"),
             Tok::Return => write!(f, "`return`"),
             Tok::Var => write!(f, "`var`"),
@@ -107,6 +101,7 @@ impl std::fmt::Display for Tok {
             Tok::While => write!(f, "`while`"),
             Tok::Break => write!(f, "`break`"),
             Tok::Continue => write!(f, "`continue`"),
+            Tok::Unknown => write!(f, "unknown character"),
             Tok::Eof => write!(f, "<EOF>"),
         }
     }
@@ -130,6 +125,7 @@ impl Span {
             end: other.start,
         }
     }
+
     pub fn len(&self) -> u32 {
         self.end - self.start
     }
@@ -404,9 +400,9 @@ impl<'input> LexerWindow<'input> {
     /// Attempt to match the next token with the given token kind.
     /// - If it matches, advance the lexer and return `Ok` with the matched token.
     /// - If it does not match, returns `Err` with the current peek token.
-    pub fn match_(&mut self, tok: Tok) -> Result<Token, Token> {
+    pub fn match_(&mut self, tok: Tok) -> Result<Span, Token> {
         if self.peek().kind == tok {
-            Ok(self.advance())
+            Ok(self.advance().span)
         } else {
             Err(*self.peek())
         }
