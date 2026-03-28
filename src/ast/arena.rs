@@ -54,6 +54,12 @@ impl<'a, T> IntoIterator for &'a Arena<T> {
             .map(|(i, item)| (ArenaId(i as u32, std::marker::PhantomData), item))
     }
 }
+impl<T> std::ops::Deref for Arena<T> {
+    type Target = [T];
+    fn deref(&self) -> &Self::Target {
+        self.items.as_slice()
+    }
+}
 impl<T> std::ops::Index<ArenaId<T>> for Arena<T> {
     type Output = T;
     fn index(&self, id: ArenaId<T>) -> &Self::Output {

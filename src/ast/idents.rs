@@ -37,11 +37,14 @@ impl Idents {
     pub fn str(&self, id: IdentId) -> &str {
         self.interner.resolve(self.idents[id.0 as usize].ident)
     }
-    pub fn string_id(&self, id: IdentId) -> StringId {
+    pub fn str_id(&self, id: IdentId) -> StringId {
         self.idents[id.0 as usize].ident
     }
     pub fn span(&self, id: IdentId) -> lexer::Span {
         self.idents[id.0 as usize].span
+    }
+    pub fn check(&self, string: &str) -> Option<StringId> {
+        self.interner.check(string)
     }
 }
 
@@ -65,6 +68,10 @@ impl StringInterner {
             self.map.insert(arc_str, string_id);
             string_id
         }
+    }
+
+    pub fn check(&self, string: &str) -> Option<StringId> {
+        self.map.get(string).copied()
     }
 
     pub fn resolve(&self, string: StringId) -> &str {

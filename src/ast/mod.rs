@@ -22,7 +22,11 @@ pub struct Ast {
 }
 impl std::fmt::Display for Ast {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let printer = printer::AstPrinter::new(self);
-        printer.fmt(f)
+        for (_, item) in &self.items {
+            match item {
+                Item::Fun(fun) => printer::fmt_fun(f, self, fun)?,
+            }
+        }
+        Ok(())
     }
 }

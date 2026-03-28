@@ -3,54 +3,29 @@ use crate::{
         Ast,
         expr::{BinOp, ExprId, ExprKind, UniOp},
         idents::IdentId,
-        item::{Item, ItemId, Param, ParamType},
-        stmt::{Stmt, StmtId},
+        item::{Fun, Item, ItemId, Param, ParamType},
+        stmt::{StmtId, StmtKind},
         typ::{TypeId, TypeKind},
     },
+    errors::Errors,
     lexer::{LexerWindow, Span, Tok, Token},
 };
-#[derive(Debug)]
-pub struct ParserError {
-    pub message: String,
-    pub span: Span,
-}
-pub struct ParserErrors {
-    errors: Vec<ParserError>,
-}
-impl ParserErrors {
-    pub fn new() -> Self {
-        Self { errors: Vec::new() }
-    }
 
-    pub fn add(&mut self, message: impl Into<String>, span: Span) {
-        if let Some(last) = self.errors.last()
-            && last.span == span
-        {
-            // don't add duplicate errors for the same span
-            return;
-        }
-        self.errors.push(ParserError {
-            message: message.into(),
-            span,
-        });
-    }
-}
-
-pub struct Parser<'input> {
-    lexer: LexerWindow<'input>,
+pub struct Parser<'a> {
+    lexer: LexerWindow<'a>,
     ast: Ast,
-    errors: ParserErrors,
+    errors: &'a mut Errors,
 }
-impl<'input> Parser<'input> {
-    pub fn new(input: &'input str) -> Self {
+impl<'a> Parser<'a> {
+    pub fn new(input: &'a str, errors: &'a mut Errors) -> Self {
         Parser {
             lexer: LexerWindow::new(input),
             ast: Ast::default(),
-            errors: ParserErrors::new(),
+            errors,
         }
     }
-    pub fn finish(self) -> (Ast, Vec<ParserError>) {
-        (self.ast, self.errors.errors)
+    pub fn finish(self) -> Ast {
+        self.ast
     }
 
     fn slice_ident(&mut self, span: Span) -> IdentId {
@@ -281,7 +256,7 @@ impl<'input> Parser<'input> {
     /// VarDecl
     ///     = "var" identifier (":" Type)? "=" Expr ";"
     pub fn parse_var(&mut self) -> Result<StmtId, ()> {
-        let _var = self.expect_tokens(&[Tok::Var])?;
+        let var = self.expect_tokens(&[Tok::Var])?;
 
         let ident_tok = self.expect_tokens(&[Tok::Identifier])?;
         let typ = if self.lexer.match_(Tok::Colon).is_ok() {
@@ -291,10 +266,14 @@ impl<'input> Parser<'input> {
         };
         let _equal = self.expect_tokens(&[Tok::Equal])?;
         let expr = self.parse_expr()?;
-        let _semicolon = self.expect_tokens(&[Tok::Semicolon])?;
+        let semicolon = self.expect_tokens(&[Tok::Semicolon])?;
 
         let ident = self.slice_ident(ident_tok.span);
-        Ok(self.ast.stmts.alloc(Stmt::VarDecl { ident, expr, typ }))
+        let span = var.span.join(&semicolon.span);
+        Ok(self
+            .ast
+            .stmts
+            .add(StmtKind::VarDecl { ident, expr, typ }, span))
     }
     /// Stmt
     ///    = VarDecl
@@ -305,19 +284,21 @@ impl<'input> Parser<'input> {
         match peek.kind {
             Tok::Var => self.parse_var(),
             Tok::Return => {
-                let _return = self.lexer.advance();
+                let return_ = self.lexer.advance();
                 let expr = if self.lexer.peek().kind != Tok::Semicolon {
                     Some(self.parse_expr()?)
                 } else {
                     None
                 };
-                let _semicolon = self.expect_tokens(&[Tok::Semicolon])?;
-                Ok(self.ast.stmts.alloc(Stmt::Return(expr)))
+                let semicolon = self.expect_tokens(&[Tok::Semicolon])?;
+                let span = return_.span.join(&semicolon.span);
+                Ok(self.ast.stmts.add(StmtKind::Return(expr), span))
             }
             _ => {
                 let expr = self.parse_expr()?;
-                let _semicolon = self.expect_tokens(&[Tok::Semicolon])?;
-                Ok(self.ast.stmts.alloc(Stmt::Expr(expr)))
+                let semicolon = self.expect_tokens(&[Tok::Semicolon])?;
+                let span = self.ast.exprs[expr].span.join(&semicolon.span);
+                Ok(self.ast.stmts.add(StmtKind::Expr(expr), span))
             }
         }
     }
@@ -425,7 +406,7 @@ impl<'input> Parser<'input> {
         let _fun = self.expect_tokens(&[Tok::Fun])?;
         let ident_tok = self.expect_tokens(&[Tok::Identifier])?;
         let params = self.parse_param_list()?;
-        let rett = if let Ok(_colon) = self.lexer.match_(Tok::Colon) {
+        let ret_type = if let Ok(_colon) = self.lexer.match_(Tok::Colon) {
             Some(self.parse_type()?)
         } else {
             None
@@ -436,12 +417,12 @@ impl<'input> Parser<'input> {
             Some(self.parse_block()?)
         };
         let ident = self.slice_ident(ident_tok.span);
-        Ok(self.ast.items.alloc(Item::Fun {
+        Ok(self.ast.items.alloc(Item::Fun(Fun {
             ident,
             params,
-            rett,
+            ret_type,
             body,
-        }))
+        })))
     }
 
     pub fn parse_item(&mut self) -> Result<ItemId, ()> {

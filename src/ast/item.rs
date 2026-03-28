@@ -8,12 +8,15 @@ pub type ItemId = ArenaId<Item>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
-    Fun {
-        ident: IdentId,
-        params: Vec<Param>,
-        rett: Option<typ::TypeId>,
-        body: Option<Vec<stmt::StmtId>>,
-    },
+    Fun(Fun),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fun {
+    pub ident: IdentId,
+    pub params: Vec<Param>,
+    pub ret_type: Option<typ::TypeId>,
+    pub body: Option<Vec<stmt::StmtId>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

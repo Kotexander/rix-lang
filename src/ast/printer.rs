@@ -1,70 +1,49 @@
 use super::{
     Ast,
     expr::{BinOp, ExprId, ExprKind, UniOp},
-    item::{Item::Fun, ParamType},
-    stmt::{Stmt, StmtId},
+    item::Fun,
+    item::ParamType,
+    stmt::{StmtId, StmtKind},
     typ::{TypeId, TypeKind},
 };
 
-pub struct AstPrinter<'a> {
-    ast: &'a Ast,
-}
-impl<'a> AstPrinter<'a> {
-    pub fn new(ast: &'a Ast) -> Self {
-        Self { ast }
-    }
-}
-impl<'a> std::fmt::Display for AstPrinter<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (_, item) in &self.ast.items {
-            match item {
-                Fun {
-                    ident,
-                    params,
-                    rett,
-                    body,
-                } => {
-                    let ident = self.ast.idents.str(*ident);
-                    write!(f, "fun {ident}(")?;
-                    for (i, param) in params.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{}: ", self.ast.idents.str(param.ident))?;
-                        match param.typ {
-                            ParamType::Type(typ) => {
-                                fmt_type(f, self.ast, typ)?;
-                            }
-                            ParamType::Variadic(_) => {
-                                write!(f, "...")?;
-                            }
-                        }
-                    }
-                    write!(f, ")")?;
-                    if let Some(rett) = rett {
-                        write!(f, " : ")?;
-                        fmt_type(f, self.ast, *rett)?;
-                    } else {
-                        write!(f, " : void")?;
-                    }
-                    if let Some(body) = body {
-                        writeln!(f, " {{")?;
-                        for stmt in body {
-                            write!(f, "    ")?;
-                            fmt_stmt(f, self.ast, *stmt)?;
-                            writeln!(f)?;
-                        }
-                        writeln!(f, "}}\n")?;
-                    } else {
-                        writeln!(f, ";\n")?;
-                    }
-                }
+pub fn fmt_fun(f: &mut std::fmt::Formatter<'_>, ast: &Ast, fun: &Fun) -> std::fmt::Result {
+    let ident = ast.idents.str(fun.ident);
+    write!(f, "fun {ident}(")?;
+    for (i, param) in fun.params.iter().enumerate() {
+        if i > 0 {
+            write!(f, ", ")?;
+        }
+        write!(f, "{}: ", ast.idents.str(param.ident))?;
+        match param.typ {
+            ParamType::Type(typ) => {
+                fmt_type(f, ast, typ)?;
+            }
+            ParamType::Variadic(_) => {
+                write!(f, "...")?;
             }
         }
-        Ok(())
     }
+    write!(f, ")")?;
+    if let Some(ret_type) = fun.ret_type {
+        write!(f, " : ")?;
+        fmt_type(f, ast, ret_type)?;
+    } else {
+        write!(f, " : void")?;
+    }
+    if let Some(body) = &fun.body {
+        writeln!(f, " {{")?;
+        for stmt in body {
+            write!(f, "    ")?;
+            fmt_stmt(f, ast, *stmt)?;
+            writeln!(f)?;
+        }
+        writeln!(f, "}}\n")?;
+    } else {
+        writeln!(f, ";\n")?;
+    }
+    Ok(())
 }
-
 fn fmt_type(f: &mut std::fmt::Formatter<'_>, ast: &Ast, typ: TypeId) -> std::fmt::Result {
     let typ = &ast.types[typ];
     match typ.kind {
@@ -151,18 +130,18 @@ fn fmt_expr(f: &mut std::fmt::Formatter<'_>, ast: &Ast, expr: ExprId) -> std::fm
 }
 fn fmt_stmt(f: &mut std::fmt::Formatter<'_>, ast: &Ast, stmt: StmtId) -> std::fmt::Result {
     let stmt = &ast.stmts[stmt];
-    match stmt {
-        Stmt::Expr(expr) => {
+    match &stmt.kind {
+        StmtKind::Expr(expr) => {
             fmt_expr(f, ast, *expr)?;
         }
-        Stmt::Return(expr) => {
+        StmtKind::Return(expr) => {
             write!(f, "return")?;
             if let Some(expr) = expr {
                 write!(f, " ")?;
                 fmt_expr(f, ast, *expr)?;
             }
         }
-        Stmt::VarDecl { ident, expr, typ } => {
+        StmtKind::VarDecl { ident, expr, typ } => {
             write!(f, "var {}", ast.idents.str(*ident))?;
             if let Some(typ) = typ {
                 write!(f, " : ")?;

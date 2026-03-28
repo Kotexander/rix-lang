@@ -107,7 +107,7 @@ impl std::fmt::Display for Tok {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Span {
     pub start: u32,
     pub end: u32,
@@ -169,9 +169,7 @@ impl<'input> Lexer<'input> {
             chars: input.chars(),
         }
     }
-    pub fn input(&self) -> &'input str {
-        self.input
-    }
+
     pub fn slice(&self, span: Span) -> &'input str {
         &self.input[span]
     }
@@ -196,8 +194,7 @@ impl<'input> Lexer<'input> {
         false
     }
 
-    #[allow(clippy::should_implement_trait)]
-    pub fn next(&mut self) -> Token {
+    pub fn advance(&mut self) -> Token {
         loop {
             let start = self.location();
             let Some(ch) = self.next_char() else {
@@ -375,15 +372,13 @@ impl<'input> LexerWindow<'input> {
             prev: None,
         }
     }
-    pub fn input(&self) -> &'input str {
-        self.lexer.input()
-    }
+
     pub fn slice(&self, span: Span) -> &'input str {
         self.lexer.slice(span)
     }
 
     pub fn peek(&mut self) -> &Token {
-        self.peek.get_or_insert_with(|| self.lexer.next())
+        self.peek.get_or_insert_with(|| self.lexer.advance())
     }
     pub fn prev(&self) -> &Token {
         self.prev
@@ -392,7 +387,7 @@ impl<'input> LexerWindow<'input> {
     }
 
     pub fn advance(&mut self) -> Token {
-        let curr = self.peek.take().unwrap_or_else(|| self.lexer.next());
+        let curr = self.peek.take().unwrap_or_else(|| self.lexer.advance());
         self.prev = Some(curr);
         curr
     }
@@ -417,58 +412,58 @@ mod tests {
     fn numbers() {
         let mut lexer = Lexer::new("123 456 7eight_nine");
 
-        let tok = lexer.next();
+        let tok = lexer.advance();
         assert_eq!(tok.kind, Tok::Number);
         assert_eq!(&lexer.input[tok.span], "123");
 
-        let tok = lexer.next();
+        let tok = lexer.advance();
         assert_eq!(tok.kind, Tok::Number);
         assert_eq!(&lexer.input[tok.span], "456");
 
-        let tok = lexer.next();
+        let tok = lexer.advance();
         assert_eq!(tok.kind, Tok::Number);
         assert_eq!(&lexer.input[tok.span], "7eight_nine");
 
-        assert_eq!(lexer.next().kind, Tok::Eof);
+        assert_eq!(lexer.advance().kind, Tok::Eof);
     }
 
     #[test]
     fn strings() {
         let mut lexer = Lexer::new(r#" "hello" "var x = \"Hello!\"" "#);
 
-        let tok = lexer.next();
+        let tok = lexer.advance();
         assert_eq!(tok.kind, Tok::String);
         assert_eq!(&lexer.input[tok.span], r#""hello""#);
-        let tok = lexer.next();
+        let tok = lexer.advance();
         assert_eq!(tok.kind, Tok::String);
         assert_eq!(&lexer.input[tok.span], r#""var x = \"Hello!\"""#);
 
-        assert_eq!(lexer.next().kind, Tok::Eof);
+        assert_eq!(lexer.advance().kind, Tok::Eof);
     }
 
     #[test]
     fn dots() {
         let mut lexer = Lexer::new(". .. ...");
 
-        assert_eq!(lexer.next().kind, Tok::Dot);
-        assert_eq!(lexer.next().kind, Tok::DotDot);
-        assert_eq!(lexer.next().kind, Tok::DotDotDot);
-        assert_eq!(lexer.next().kind, Tok::Eof);
+        assert_eq!(lexer.advance().kind, Tok::Dot);
+        assert_eq!(lexer.advance().kind, Tok::DotDot);
+        assert_eq!(lexer.advance().kind, Tok::DotDotDot);
+        assert_eq!(lexer.advance().kind, Tok::Eof);
     }
 
     #[test]
     fn long_operators() {
         let mut lexer = Lexer::new("= == != < <= << > >= >>");
-        assert_eq!(lexer.next().kind, Tok::Equal);
-        assert_eq!(lexer.next().kind, Tok::EqualEqual);
-        assert_eq!(lexer.next().kind, Tok::BangEqual);
-        assert_eq!(lexer.next().kind, Tok::Less);
-        assert_eq!(lexer.next().kind, Tok::LessEqual);
-        assert_eq!(lexer.next().kind, Tok::LessLess);
-        assert_eq!(lexer.next().kind, Tok::Greater);
-        assert_eq!(lexer.next().kind, Tok::GreaterEqual);
-        assert_eq!(lexer.next().kind, Tok::GreaterGreater);
-        assert_eq!(lexer.next().kind, Tok::Eof);
+        assert_eq!(lexer.advance().kind, Tok::Equal);
+        assert_eq!(lexer.advance().kind, Tok::EqualEqual);
+        assert_eq!(lexer.advance().kind, Tok::BangEqual);
+        assert_eq!(lexer.advance().kind, Tok::Less);
+        assert_eq!(lexer.advance().kind, Tok::LessEqual);
+        assert_eq!(lexer.advance().kind, Tok::LessLess);
+        assert_eq!(lexer.advance().kind, Tok::Greater);
+        assert_eq!(lexer.advance().kind, Tok::GreaterEqual);
+        assert_eq!(lexer.advance().kind, Tok::GreaterGreater);
+        assert_eq!(lexer.advance().kind, Tok::Eof);
     }
 
     #[test]
@@ -483,33 +478,33 @@ mod tests {
             }
             "#,
         );
-        assert_eq!(lexer.next().kind, Tok::Var);
-        assert_eq!(lexer.next().kind, Tok::Identifier);
-        assert_eq!(lexer.next().kind, Tok::Equal);
-        assert_eq!(lexer.next().kind, Tok::Identifier);
-        assert_eq!(lexer.next().kind, Tok::LParen);
-        assert_eq!(lexer.next().kind, Tok::Number);
-        assert_eq!(lexer.next().kind, Tok::Comma);
-        assert_eq!(lexer.next().kind, Tok::Number);
-        assert_eq!(lexer.next().kind, Tok::RParen);
-        assert_eq!(lexer.next().kind, Tok::Semicolon);
-        assert_eq!(lexer.next().kind, Tok::Fun);
-        assert_eq!(lexer.next().kind, Tok::Identifier);
-        assert_eq!(lexer.next().kind, Tok::LParen);
-        assert_eq!(lexer.next().kind, Tok::Identifier);
-        assert_eq!(lexer.next().kind, Tok::Comma);
-        assert_eq!(lexer.next().kind, Tok::Identifier);
-        assert_eq!(lexer.next().kind, Tok::RParen);
-        assert_eq!(lexer.next().kind, Tok::Colon);
-        assert_eq!(lexer.next().kind, Tok::Identifier);
-        assert_eq!(lexer.next().kind, Tok::LBrace);
-        assert_eq!(lexer.next().kind, Tok::Return);
-        assert_eq!(lexer.next().kind, Tok::Identifier);
-        assert_eq!(lexer.next().kind, Tok::Plus);
-        assert_eq!(lexer.next().kind, Tok::Identifier);
-        assert_eq!(lexer.next().kind, Tok::Semicolon);
-        assert_eq!(lexer.next().kind, Tok::RBrace);
-        assert_eq!(lexer.next().kind, Tok::Eof);
+        assert_eq!(lexer.advance().kind, Tok::Var);
+        assert_eq!(lexer.advance().kind, Tok::Identifier);
+        assert_eq!(lexer.advance().kind, Tok::Equal);
+        assert_eq!(lexer.advance().kind, Tok::Identifier);
+        assert_eq!(lexer.advance().kind, Tok::LParen);
+        assert_eq!(lexer.advance().kind, Tok::Number);
+        assert_eq!(lexer.advance().kind, Tok::Comma);
+        assert_eq!(lexer.advance().kind, Tok::Number);
+        assert_eq!(lexer.advance().kind, Tok::RParen);
+        assert_eq!(lexer.advance().kind, Tok::Semicolon);
+        assert_eq!(lexer.advance().kind, Tok::Fun);
+        assert_eq!(lexer.advance().kind, Tok::Identifier);
+        assert_eq!(lexer.advance().kind, Tok::LParen);
+        assert_eq!(lexer.advance().kind, Tok::Identifier);
+        assert_eq!(lexer.advance().kind, Tok::Comma);
+        assert_eq!(lexer.advance().kind, Tok::Identifier);
+        assert_eq!(lexer.advance().kind, Tok::RParen);
+        assert_eq!(lexer.advance().kind, Tok::Colon);
+        assert_eq!(lexer.advance().kind, Tok::Identifier);
+        assert_eq!(lexer.advance().kind, Tok::LBrace);
+        assert_eq!(lexer.advance().kind, Tok::Return);
+        assert_eq!(lexer.advance().kind, Tok::Identifier);
+        assert_eq!(lexer.advance().kind, Tok::Plus);
+        assert_eq!(lexer.advance().kind, Tok::Identifier);
+        assert_eq!(lexer.advance().kind, Tok::Semicolon);
+        assert_eq!(lexer.advance().kind, Tok::RBrace);
+        assert_eq!(lexer.advance().kind, Tok::Eof);
     }
 
     #[test]
