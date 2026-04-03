@@ -12,7 +12,7 @@ impl StmtArena {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StmtKind {
     Expr(expr::ExprId),
     VarDecl {
@@ -20,7 +20,26 @@ pub enum StmtKind {
         expr: expr::ExprId,
         typ: Option<typ::TypeId>,
     },
+    Assign {
+        lhs: expr::ExprId,
+        rhs: expr::ExprId,
+    },
     Return(Option<expr::ExprId>),
+    If {
+        /// first elif block is the main if block, the rest are else if blocks
+        elifs: Vec<CondBlock>,
+        els: Option<Vec<StmtId>>,
+    },
+    While(CondBlock),
+    Break,
+    Continue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Conditional block, used for if and while statements
+pub struct CondBlock {
+    pub cond: expr::ExprId,
+    pub body: Vec<StmtId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

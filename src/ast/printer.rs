@@ -32,13 +32,8 @@ pub fn fmt_fun(f: &mut std::fmt::Formatter<'_>, ast: &Ast, fun: &Fun) -> std::fm
         write!(f, " : void")?;
     }
     if let Some(body) = &fun.body {
-        writeln!(f, " {{")?;
-        for stmt in body {
-            write!(f, "    ")?;
-            fmt_stmt(f, ast, *stmt)?;
-            writeln!(f)?;
-        }
-        writeln!(f, "}}\n")?;
+        fmt_block(f, " ", 0, ast, body)?;
+        writeln!(f, "\n")?;
     } else {
         writeln!(f, ";\n")?;
     }
@@ -128,11 +123,20 @@ fn fmt_expr(f: &mut std::fmt::Formatter<'_>, ast: &Ast, expr: ExprId) -> std::fm
         }
     }
 }
-fn fmt_stmt(f: &mut std::fmt::Formatter<'_>, ast: &Ast, stmt: StmtId) -> std::fmt::Result {
+fn fmt_stmt(
+    f: &mut std::fmt::Formatter<'_>,
+    indents: u32,
+    ast: &Ast,
+    stmt: StmtId,
+) -> std::fmt::Result {
+    for _ in 0..indents {
+        write!(f, "    ")?;
+    }
     let stmt = &ast.stmts[stmt];
     match &stmt.kind {
         StmtKind::Expr(expr) => {
             fmt_expr(f, ast, *expr)?;
+            write!(f, ";")
         }
         StmtKind::Return(expr) => {
             write!(f, "return")?;
@@ -140,6 +144,7 @@ fn fmt_stmt(f: &mut std::fmt::Formatter<'_>, ast: &Ast, stmt: StmtId) -> std::fm
                 write!(f, " ")?;
                 fmt_expr(f, ast, *expr)?;
             }
+            write!(f, ";")
         }
         StmtKind::VarDecl { ident, expr, typ } => {
             write!(f, "var {}", ast.idents.str(*ident))?;
@@ -149,7 +154,60 @@ fn fmt_stmt(f: &mut std::fmt::Formatter<'_>, ast: &Ast, stmt: StmtId) -> std::fm
             }
             write!(f, " = ")?;
             fmt_expr(f, ast, *expr)?;
+            write!(f, ";")
+        }
+        StmtKind::Assign { lhs, rhs } => {
+            fmt_expr(f, ast, *lhs)?;
+            write!(f, " = ")?;
+            fmt_expr(f, ast, *rhs)?;
+            write!(f, ";")
+        }
+        StmtKind::If { elifs, els } => {
+            fmt_cond_block(f, "if", indents, ast, &elifs[0])?;
+
+            for cond_block in &elifs[1..] {
+                fmt_cond_block(f, " else if", indents, ast, cond_block)?;
+            }
+            if let Some(els) = els {
+                fmt_block(f, " else ", indents, ast, els)?;
+            }
+            Ok(())
+        }
+        StmtKind::While(cond_block) => fmt_cond_block(f, "while ", indents, ast, cond_block),
+        StmtKind::Break => {
+            write!(f, "break;")
+        }
+        StmtKind::Continue => {
+            write!(f, "continue;")
         }
     }
-    write!(f, ";")
+}
+fn fmt_cond_block(
+    f: &mut std::fmt::Formatter<'_>,
+    prefix: &str,
+    indents: u32,
+    ast: &Ast,
+    cond_block: &super::stmt::CondBlock,
+) -> std::fmt::Result {
+    write!(f, "{prefix} ")?;
+    fmt_expr(f, ast, cond_block.cond)?;
+    fmt_block(f, " ", indents, ast, &cond_block.body)
+}
+fn fmt_block(
+    f: &mut std::fmt::Formatter<'_>,
+    prefix: &str,
+    indents: u32,
+    ast: &Ast,
+    block: &[StmtId],
+) -> std::fmt::Result {
+    write!(f, "{prefix}{{")?;
+    for stmt in block {
+        writeln!(f)?;
+        fmt_stmt(f, indents + 1, ast, *stmt)?;
+    }
+    writeln!(f)?;
+    for _ in 0..indents {
+        write!(f, "    ")?;
+    }
+    write!(f, "}}")
 }

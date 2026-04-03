@@ -26,6 +26,24 @@ const ATOM_MAP: &[(&str, tir::typ::AtomType)] = &[
 
 struct BlockState {
     ret_type: tir::typ::TypeId,
+    loop_depth: u32,
+}
+impl BlockState {
+    fn new(ret_type: tir::typ::TypeId) -> Self {
+        Self {
+            ret_type,
+            loop_depth: 0,
+        }
+    }
+    fn enter_loop(&mut self) {
+        self.loop_depth += 1;
+    }
+    fn exit_loop(&mut self) {
+        self.loop_depth -= 1;
+    }
+    fn in_loop(&self) -> bool {
+        self.loop_depth > 0
+    }
 }
 
 struct Resolver<'a> {
@@ -135,7 +153,7 @@ impl<'a> Resolver<'a> {
     }
     fn resolve_bin_op(
         &mut self,
-        _op: ast::expr::BinOp,
+        op: ast::expr::BinOp,
         lhs: ast::expr::ExprId,
         rhs: ast::expr::ExprId,
         span: lexer::Span,
@@ -160,7 +178,11 @@ impl<'a> Resolver<'a> {
             return self.typs.error();
         }
 
-        lhs_type_id
+        if op.is_comparison() {
+            self.typs.atom(tir::typ::AtomType::Bool)
+        } else {
+            lhs_type_id
+        }
     }
     fn resolve_expr(&mut self, id: ast::expr::ExprId) -> tir::typ::TypeId {
         let expr = &self.ast.exprs[id];
@@ -187,7 +209,36 @@ impl<'a> Resolver<'a> {
                 self.resolve_bin_op(*op, *lhs, *rhs, expr.span)
             }
             ast::expr::ExprKind::UniOp { op, expr } => self.resolve_uni_op(*op, *expr),
-            ast::expr::ExprKind::Index { .. } => todo!(),
+            ast::expr::ExprKind::Index { base, index } => {
+                let base_type_id = self.resolve_expr(*base);
+                let index_type_id = self.resolve_expr(*index);
+                let base_type = &self.typs[base_type_id];
+                let index_type = &self.typs[index_type_id];
+                let inner_type = match base_type {
+                    tir::typ::Type::Ptr(inner) => *inner,
+                    tir::typ::Type::Error => self.typs.error(),
+                    _ => {
+                        self.errors.add(
+                            format!("cannot index into type '{:?}'", self.typs[base_type_id]),
+                            self.ast.exprs[*base].span,
+                        );
+                        self.typs.error()
+                    }
+                };
+
+                if index_type_id != self.typs.atom(tir::typ::AtomType::UPtr) {
+                    self.errors.add(
+                        format!(
+                            "type mismatch in index expression: expected '{:?}', got '{:?}'",
+                            tir::typ::AtomType::UPtr,
+                            index_type
+                        ),
+                        self.ast.exprs[*index].span,
+                    );
+                }
+
+                inner_type
+            }
             ast::expr::ExprKind::Call { callee, args } => {
                 let callee_type_id = self.resolve_expr(*callee);
 
@@ -195,29 +246,37 @@ impl<'a> Resolver<'a> {
                     args.iter().map(|arg| self.resolve_expr(*arg)).collect();
 
                 let callee_type = &self.typs[callee_type_id];
-                if let tir::typ::Type::Fun(fun_type) = callee_type {
-                    if fun_type.params.len() > resolved_args.len() {
-                        self.errors.add(
-                            format!(
-                                "too few arguments in function call: expected at least {}, got {}",
-                                fun_type.params.len(),
-                                resolved_args.len()
-                            ),
-                            expr.span,
-                        );
-                    } else if !fun_type.varargs && fun_type.params.len() < resolved_args.len() {
-                        self.errors.add(
-                            format!(
-                                "too many arguments in function call: expected {}, got {}",
-                                fun_type.params.len(),
-                                resolved_args.len()
-                            ),
-                            expr.span,
-                        );
-                    } else {
+                match callee_type {
+                    tir::typ::Type::Fun(fun_type) => {
+                        if fun_type.params.len() > resolved_args.len() {
+                            self.errors.add(
+                                format!(
+                                    "too few arguments in function call: expected at least {}, got {}",
+                                    fun_type.params.len(),
+                                    resolved_args.len()
+                                ),
+                                expr.span,
+                            );
+                        } else if !fun_type.varargs && fun_type.params.len() < resolved_args.len() {
+                            self.errors.add(
+                                format!(
+                                    "too many arguments in function call: expected {}, got {}",
+                                    fun_type.params.len(),
+                                    resolved_args.len()
+                                ),
+                                expr.span,
+                            );
+                        }
                         for (i, param_type) in fun_type.params.iter().enumerate() {
                             let arg_type = resolved_args[i];
-                            if *param_type != arg_type {
+                            // report error if all of the following are true:
+                            // type mismatch
+                            // argument type is not already an error
+                            // parameter type is not already an error
+                            if *param_type != arg_type
+                            // && !self.typs[arg_type].is_error()
+                            // && !self.typs[*param_type].is_error()
+                            {
                                 self.errors.add(
                                     format!(
                                         "type mismatch in argument {}: expected '{:?}', got '{:?}'",
@@ -229,15 +288,17 @@ impl<'a> Resolver<'a> {
                                 );
                             }
                         }
-                    }
 
-                    fun_type.ret_type
-                } else {
-                    self.errors.add(
-                        format!("cannot call non-function type '{:?}'", callee_type),
-                        self.ast.exprs[*callee].span,
-                    );
-                    self.typs.error()
+                        fun_type.ret_type
+                    }
+                    tir::typ::Type::Error => self.typs.error(),
+                    _ => {
+                        self.errors.add(
+                            format!("cannot call non-function type '{:?}'", callee_type),
+                            self.ast.exprs[*callee].span,
+                        );
+                        self.typs.error()
+                    }
                 }
             }
         };
@@ -245,7 +306,7 @@ impl<'a> Resolver<'a> {
         typ
     }
 
-    fn resolve_block(&mut self, block: &[ast::stmt::StmtId], state: &BlockState) {
+    fn resolve_block(&mut self, block: &[ast::stmt::StmtId], state: &mut BlockState) {
         for stmt_id in block {
             let stmt = &self.ast.stmts[*stmt_id];
             match &stmt.kind {
@@ -274,6 +335,22 @@ impl<'a> Resolver<'a> {
                         .scope_stack
                         .insert_def(self.ast.idents.str_id(*ident), def_id);
                 }
+                ast::stmt::StmtKind::Assign { lhs, rhs } => {
+                    let lhs_type_id = self.resolve_expr(*lhs);
+                    let rhs_type_id = self.resolve_expr(*rhs);
+                    let lhs_type = &self.typs[lhs_type_id];
+                    let rhs_type = &self.typs[rhs_type_id];
+
+                    if lhs_type_id != rhs_type_id && !(lhs_type.is_error() || rhs_type.is_error()) {
+                        self.errors.add(
+                            format!(
+                                "type mismatch in assignment: expected '{:?}', got '{:?}'",
+                                self.typs[lhs_type_id], self.typs[rhs_type_id]
+                            ),
+                            stmt.span,
+                        );
+                    }
+                }
                 ast::stmt::StmtKind::Return(expr) => {
                     let expr_typ = expr
                         .map(|expr| self.resolve_expr(expr))
@@ -288,8 +365,60 @@ impl<'a> Resolver<'a> {
                         );
                     }
                 }
+                ast::stmt::StmtKind::If { elifs, els } => {
+                    for cond_block in elifs {
+                        self.resolve_cond_block(cond_block, state, false);
+                    }
+                    if let Some(els) = els {
+                        self.scope_stack.push_scope();
+                        self.resolve_block(els, state);
+                        self.scope_stack.pop_scope();
+                    }
+                }
+                ast::stmt::StmtKind::While(cond_block) => {
+                    self.resolve_cond_block(cond_block, state, true);
+                }
+                ast::stmt::StmtKind::Break => {
+                    if !state.in_loop() {
+                        self.errors
+                            .add("break statement not inside a loop", stmt.span);
+                    }
+                }
+                ast::stmt::StmtKind::Continue => {
+                    if !state.in_loop() {
+                        self.errors
+                            .add("continue statement not inside a loop", stmt.span);
+                    }
+                }
             }
         }
+    }
+    fn resolve_cond_block(
+        &mut self,
+        cond_block: &ast::stmt::CondBlock,
+        state: &mut BlockState,
+        is_loop: bool,
+    ) {
+        let cond_type = self.resolve_expr(cond_block.cond);
+        if cond_type != self.typs.atom(tir::typ::AtomType::Bool) {
+            self.errors.add(
+                format!(
+                    "type mismatch in condition: expected '{:?}', got '{:?}'",
+                    tir::typ::AtomType::Bool,
+                    self.typs[cond_type]
+                ),
+                self.ast.exprs[cond_block.cond].span,
+            );
+        }
+        self.scope_stack.push_scope();
+        if is_loop {
+            state.enter_loop();
+        }
+        self.resolve_block(&cond_block.body, state);
+        if is_loop {
+            state.exit_loop();
+        }
+        self.scope_stack.pop_scope();
     }
 
     fn declare_fun(&mut self, fun: &ast::item::Fun) -> Result<(), tir::def::DefId> {
@@ -309,7 +438,7 @@ impl<'a> Resolver<'a> {
                     } else {
                         varargs = true;
                         // TODO: have a proper type for variadic parameters instead of this placeholder
-                        params.push(self.typs.error());
+                        // params.push(self.typs.error());
                     }
                 }
             }
@@ -345,9 +474,9 @@ impl<'a> Resolver<'a> {
         }
         self.scope_stack.push_scope(); // function body scope
 
-        for (i, param) in fun.params.iter().enumerate() {
-            let param_type = fun_type.params[i];
-            let param_def_id = self.defs.insert(param.ident, param_type);
+        for (i, param_type) in fun_type.params.iter().enumerate() {
+            let param = fun.params[i];
+            let param_def_id = self.defs.insert(param.ident, *param_type);
 
             if let Err(_old_def_id) = self
                 .scope_stack
@@ -364,13 +493,11 @@ impl<'a> Resolver<'a> {
         }
 
         if let Some(body) = &fun.body {
-            let state = BlockState {
-                ret_type: fun_type.ret_type,
-            };
-            self.resolve_block(body, &state);
+            let mut state = BlockState::new(fun_type.ret_type);
+            self.resolve_block(body, &mut state);
         }
 
-        self.scope_stack.pop_scope();
+        self.scope_stack.pop_scope(); // function body scope
     }
 }
 

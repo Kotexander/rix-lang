@@ -62,6 +62,14 @@ pub enum BinOp {
     LogicalAnd,
     LogicalOr,
 }
+impl BinOp {
+    pub fn is_comparison(&self) -> bool {
+        matches!(
+            self,
+            BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge | BinOp::Eq | BinOp::Ne
+        )
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UniOp {

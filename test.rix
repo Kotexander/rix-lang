@@ -1,13 +1,21 @@
 fun printf(fmt: *u8, _: ...) : i32;
 
 fun main(argc: i32, argv: **u8) : i32 {
-    var x = 5 + 3;
-    var e = 42 + * 5;
+    if argc > 1 {
+        printf("Multiple arguments provided. First argument: %s", argv[0]);
+    } else if argc == 1 {
+        printf("One argument provided.");
+    } else {
+        printf("No arguments provided.");
+    }
 
-    printf("%d", y, 5);
-    foo(42);
+    var i = 0;
+    while i < argc {
+        printf("Argument %d: %s", i, argv[i]);
+        i = i + 1;
+    }
 
-    return square("hello");
+    return square(0);
 }
 
 fun square(n: i32) : i32 {
