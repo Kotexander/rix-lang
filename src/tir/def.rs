@@ -1,13 +1,13 @@
-use crate::ast::idents::IdentId;
-
 use super::typ;
+use crate::{lexer, strings::StrId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DefId(u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Def {
-    pub ident: IdentId,
+    pub str: StrId,
+    pub span: lexer::Span,
     pub typ: typ::TypeId,
 }
 
@@ -19,9 +19,9 @@ impl Defs {
     pub fn new() -> Self {
         Self { defs: Vec::new() }
     }
-    pub fn insert(&mut self, ident: IdentId, typ: typ::TypeId) -> DefId {
+    pub fn insert(&mut self, str: StrId, span: lexer::Span, typ: typ::TypeId) -> DefId {
         let id = DefId(self.defs.len() as u32);
-        self.defs.push(Def { ident, typ });
+        self.defs.push(Def { typ, str, span });
         id
     }
 }

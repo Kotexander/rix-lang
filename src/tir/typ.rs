@@ -62,7 +62,13 @@ impl Type {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypeId(u32);
+impl TypeId {
+    pub fn get(self) -> u32 {
+        self.0
+    }
+}
 
+#[derive(Debug)]
 pub struct Typs {
     types: Vec<Arc<Type>>,
     map: HashMap<Arc<Type>, TypeId>,
@@ -112,6 +118,20 @@ impl std::ops::Index<TypeId> for Typs {
         &self.types[id.0 as usize]
     }
 }
+impl<'a> IntoIterator for &'a Typs {
+    type Item = (TypeId, &'a Arc<Type>);
+    type IntoIter = std::iter::Map<
+        std::iter::Enumerate<std::slice::Iter<'a, Arc<Type>>>,
+        fn((usize, &'a Arc<Type>)) -> (TypeId, &'a Arc<Type>),
+    >;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.types
+            .iter()
+            .enumerate()
+            .map(|(i, typ)| (TypeId(i as u32), typ))
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -124,7 +144,7 @@ mod tests {
         // make sure that error() and insert(Type::Error) return the same id
         assert_eq!(typs.error(), typs.insert(Type::Error));
 
-        // make sure that atom() and insert(Type::Atom) return the same id
+        // make sure that atom(...) and insert(Type::Atom(...)) return the same id
         for atom in AtomType::ALL {
             assert_eq!(typs.atom(*atom), typs.insert(Type::Atom(*atom)));
         }

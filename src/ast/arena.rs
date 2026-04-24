@@ -1,6 +1,20 @@
+use std::num::NonZeroU32;
+
 #[derive(Debug)]
 #[repr(transparent)]
-pub struct ArenaId<T>(u32, std::marker::PhantomData<T>);
+pub struct ArenaId<T>(NonZeroU32, std::marker::PhantomData<T>);
+impl<T> ArenaId<T> {
+    pub fn new(id: u32) -> Self {
+        ArenaId(
+            unsafe { NonZeroU32::new_unchecked(id + 1) },
+            std::marker::PhantomData,
+        )
+    }
+    #[inline]
+    pub fn get(self) -> u32 {
+        self.0.get() - 1
+    }
+}
 impl<T> Clone for ArenaId<T> {
     fn clone(&self) -> Self {
         *self
@@ -35,10 +49,10 @@ impl<T> Arena<T> {
     pub fn alloc(&mut self, item: T) -> ArenaId<T> {
         let id = self.items.len() as u32;
         self.items.push(item);
-        ArenaId(id, std::marker::PhantomData)
+        ArenaId::new(id)
     }
     pub fn get(&self, id: ArenaId<T>) -> Option<&T> {
-        self.items.get(id.0 as usize)
+        self.items.get(id.get() as usize)
     }
 }
 impl<'a, T> IntoIterator for &'a Arena<T> {
@@ -51,7 +65,7 @@ impl<'a, T> IntoIterator for &'a Arena<T> {
         self.items
             .iter()
             .enumerate()
-            .map(|(i, item)| (ArenaId(i as u32, std::marker::PhantomData), item))
+            .map(|(i, item)| (ArenaId::new(i as u32), item))
     }
 }
 impl<T> std::ops::Deref for Arena<T> {
@@ -63,6 +77,6 @@ impl<T> std::ops::Deref for Arena<T> {
 impl<T> std::ops::Index<ArenaId<T>> for Arena<T> {
     type Output = T;
     fn index(&self, id: ArenaId<T>) -> &Self::Output {
-        &self.items[id.0 as usize]
+        &self.items[id.get() as usize]
     }
 }

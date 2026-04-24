@@ -1,28 +1,71 @@
-use std::vec;
-
 use crate::{
     ast::{
         Ast,
         expr::{BinOp, ExprId, ExprKind, UniOp},
-        idents::IdentId,
+        idents::{Ident, IdentId},
         item::{Fun, Item, ItemId, Param, ParamType},
+        literals::{NumLit, StrLit},
         stmt::{CondBlock, StmtId, StmtKind},
         typ::{TypeId, TypeKind},
     },
     errors::Errors,
     lexer::{LexerWindow, Span, Tok, Token},
+    strings::{Interner, StrId},
 };
+
+pub fn parse_number(src: &str) -> Result<u128, ()> {
+    src.parse().map_err(|_| ())
+}
+pub fn parse_string(src: &str) -> Result<String, ()> {
+    let mut result = String::new();
+    let mut chars = src.chars();
+    if chars.next() != Some('"') {
+        // String literals must start with a quote
+        return Err(());
+    }
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(esc) = chars.next() {
+                match esc {
+                    'n' => result.push('\n'),
+                    't' => result.push('\t'),
+                    'r' => result.push('\r'),
+                    '\\' => result.push('\\'),
+                    '"' => result.push('"'),
+                    _ => {
+                        // Invalid escape sequence
+                        return Err(());
+                    }
+                }
+            } else {
+                // Trailing backslash
+                return Err(());
+            }
+        } else if c == '"' {
+            if chars.next().is_some() {
+                // Unexpected characters after closing quote
+                return Err(());
+            }
+            return Ok(result);
+        } else {
+            result.push(c);
+        }
+    }
+    Ok(result)
+}
 
 pub struct Parser<'a> {
     lexer: LexerWindow<'a>,
     ast: Ast,
+    interner: &'a mut Interner,
     errors: &'a mut Errors,
 }
 impl<'a> Parser<'a> {
-    pub fn new(input: &'a str, errors: &'a mut Errors) -> Self {
+    pub fn new(input: &'a str, interner: &'a mut Interner, errors: &'a mut Errors) -> Self {
         Parser {
             lexer: LexerWindow::new(input),
             ast: Ast::default(),
+            interner,
             errors,
         }
     }
@@ -30,9 +73,13 @@ impl<'a> Parser<'a> {
         self.ast
     }
 
+    fn slice_str(&mut self, span: Span) -> StrId {
+        let str = self.lexer.slice(span);
+        self.interner.intern(str)
+    }
     fn slice_ident(&mut self, span: Span) -> IdentId {
-        let ident = self.lexer.slice(span);
-        self.ast.idents.add(ident, span)
+        let ident = self.slice_str(span);
+        self.ast.idents.alloc(Ident::new(ident, span))
     }
 
     fn expect_tokens(&mut self, expected: &[Tok]) -> Result<Token, ()> {
@@ -100,8 +147,24 @@ impl<'input> Parser<'input> {
         match peek.kind {
             Tok::Number => {
                 let number = self.lexer.advance();
-                let kind = ExprKind::Integer(self.slice_ident(number.span));
-                Ok(self.ast.exprs.add(kind, number.span))
+                let src = self.lexer.slice(number.span);
+                if let Ok(num) = parse_number(src) {
+                    let src_id = self.interner.intern(src);
+                    let num_lit = NumLit {
+                        num,
+                        src: src_id,
+                        span: number.span,
+                    };
+                    let num_lit_id = self.ast.numbers.alloc(num_lit);
+                    Ok(self
+                        .ast
+                        .exprs
+                        .add(ExprKind::Number(num_lit_id), number.span))
+                } else {
+                    self.errors
+                        .add(format!("invalid number literal: {}", src), number.span);
+                    Err(())
+                }
             }
             Tok::Identifier => {
                 let identifer = self.lexer.advance();
@@ -113,8 +176,25 @@ impl<'input> Parser<'input> {
             }
             Tok::String => {
                 let string = self.lexer.advance();
-                let ident = self.slice_ident(string.span);
-                Ok(self.ast.exprs.add(ExprKind::String(ident), string.span))
+                let src = self.lexer.slice(string.span);
+                if let Ok(str) = parse_string(src) {
+                    let src_id = self.interner.intern(src);
+                    let str_id = self.interner.intern(str);
+                    let str_lit = StrLit {
+                        str: str_id,
+                        src: src_id,
+                        span: string.span,
+                    };
+                    let str_lit_id = self.ast.strings.alloc(str_lit);
+                    Ok(self
+                        .ast
+                        .exprs
+                        .add(ExprKind::String(str_lit_id), string.span))
+                } else {
+                    self.errors
+                        .add(format!("invalid string literal: {}", src), string.span);
+                    Err(())
+                }
             }
             Tok::LParen => {
                 let lparen = self.lexer.advance().span;
