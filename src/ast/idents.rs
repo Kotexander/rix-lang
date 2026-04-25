@@ -1,6 +1,6 @@
-use super::arena::{Arena, ArenaId};
-use crate::lexer;
-use crate::strings::StrId;
+use crate::{arena::ArenaId, define_view, lexer, strings::StrId};
+
+pub type IdentId = ArenaId<Ident>;
 
 /// An identifier with its original span information.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,25 +14,10 @@ impl Ident {
     }
 }
 
-pub type IdentArena = Arena<Ident>;
-pub type IdentId = ArenaId<Ident>;
-
-pub struct IdentView<'a> {
-    view: super::AstView<'a>,
-    id: IdentId,
-}
+define_view!(IdentView, Ident, IdentId, idents);
 impl<'a> IdentView<'a> {
-    pub fn new(view: super::AstView<'a>, id: IdentId) -> Self {
-        Self { id, view }
-    }
-    pub fn id(&self) -> IdentId {
-        self.id
-    }
     pub fn str_id(&self) -> StrId {
-        self.view.ast.idents[self.id].str
-    }
-    pub fn span(&self) -> lexer::Span {
-        self.view.ast.idents[self.id].span
+        self.node().str
     }
     pub fn str(&self) -> &'a str {
         self.view.interner.resolve(self.str_id())

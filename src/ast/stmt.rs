@@ -1,52 +1,47 @@
 use super::{
-    arena::{Arena, ArenaId},
     expr::{ExprId, ExprView},
     idents::{IdentId, IdentView},
     typ::{TypeId, TypeView},
 };
-use crate::lexer;
+use crate::{
+    arena::{ArenaId, ArenaRange},
+    define_view, lexer,
+};
 
-pub type StmtArena = Arena<Stmt>;
 pub type StmtId = ArenaId<Stmt>;
+pub type CondBlockId = ArenaId<CondBlock>;
 
-impl StmtArena {
-    pub fn add(&mut self, kind: StmtKind, span: lexer::Span) -> StmtId {
-        self.alloc(Stmt::new(kind, span))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum StmtKind<S = StmtId, T = TypeId, I = IdentId, E = ExprId> {
-    Expr(E),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StmtKind {
+    Expr(ExprId),
     VarDecl {
-        ident: I,
-        expr: E,
-        typ: Option<T>,
+        ident: IdentId,
+        expr: ExprId,
+        typ: Option<TypeId>,
     },
     Assign {
-        lhs: E,
-        rhs: E,
+        lhs: ExprId,
+        rhs: ExprId,
     },
-    Return(Option<E>),
+    Return(Option<ExprId>),
     If {
-        /// first [CondBlock] is the main `if` block, the rest are `else if` blocks
-        elifs: Vec<CondBlock<S, E>>,
-        els: Option<Vec<S>>,
+        /// [0] is the main `if` block, [1..] are the `else if` blocks
+        elifs: ArenaRange<CondBlockId>,
+        els: Option<ArenaRange<StmtId>>,
     },
-    While(CondBlock<S, E>),
+    While(CondBlockId),
     Break,
     Continue,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
 /// Conditional block, used for if and while statements
-pub struct CondBlock<S = StmtId, E = ExprId> {
-    pub cond: E,
-    pub body: Vec<S>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CondBlock {
+    pub cond: ExprId,
+    pub block: ArenaRange<StmtId>,
 }
-pub type CondBlockView<'a> = CondBlock<StmtView<'a>, ExprView<'a>>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stmt {
     pub kind: StmtKind,
     pub span: lexer::Span,
@@ -57,65 +52,107 @@ impl Stmt {
     }
 }
 
-pub struct StmtView<'a> {
+#[derive(Debug, Clone, Copy)]
+pub struct StmtListView<'a> {
     view: super::AstView<'a>,
-    id: StmtId,
+    ids: ArenaRange<StmtId>,
 }
+impl<'a> StmtListView<'a> {
+    pub fn new(view: super::AstView<'a>, ids: ArenaRange<StmtId>) -> Self {
+        Self { ids, view }
+    }
+    pub fn iter(&self) -> impl Iterator<Item = StmtView<'a>> {
+        self.view.ast.stmts_lists[self.ids]
+            .iter()
+            .map(|id| StmtView::new(self.view, *id))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CondBlockView<'a> {
+    view: super::AstView<'a>,
+    block: CondBlockId,
+}
+impl<'a> CondBlockView<'a> {
+    pub fn new(view: super::AstView<'a>, block: CondBlockId) -> Self {
+        Self { block, view }
+    }
+    pub fn id(&self) -> CondBlockId {
+        self.block
+    }
+    pub fn cond(&self) -> ExprView<'a> {
+        ExprView::new(self.view, self.view.ast.cond_blocks[self.block].cond)
+    }
+    pub fn block(&self) -> StmtListView<'a> {
+        StmtListView::new(self.view, self.view.ast.cond_blocks[self.block].block)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CondBlockListView<'a> {
+    view: super::AstView<'a>,
+    ids: ArenaRange<CondBlockId>,
+}
+impl<'a> CondBlockListView<'a> {
+    pub fn new(view: super::AstView<'a>, ids: ArenaRange<CondBlockId>) -> Self {
+        Self { ids, view }
+    }
+    pub fn iter(&self) -> impl Iterator<Item = CondBlockView<'a>> {
+        self.view.ast.cond_blocks_lists[self.ids]
+            .iter()
+            .map(|id| CondBlockView::new(self.view, *id))
+    }
+}
+
+/// See [`StmtKind`]
+#[derive(Debug, Clone, Copy)]
+pub enum StmtKindView<'a> {
+    Expr(ExprView<'a>),
+    VarDecl {
+        ident: IdentView<'a>,
+        expr: ExprView<'a>,
+        typ: Option<TypeView<'a>>,
+    },
+    Assign {
+        lhs: ExprView<'a>,
+        rhs: ExprView<'a>,
+    },
+    Return(Option<ExprView<'a>>),
+    If {
+        elifs: CondBlockListView<'a>,
+        els: Option<StmtListView<'a>>,
+    },
+    While(CondBlockView<'a>),
+    Break,
+    Continue,
+}
+
+define_view!(StmtView, Stmt, StmtId, stmts);
 impl<'a> StmtView<'a> {
-    pub fn new(view: super::AstView<'a>, id: StmtId) -> Self {
-        Self { id, view }
-    }
-    pub fn id(&self) -> StmtId {
-        self.id
-    }
-    pub fn span(&self) -> lexer::Span {
-        self.view.ast.stmts[self.id].span
-    }
-    pub fn kind(&self) -> StmtKind<StmtView<'a>, TypeView<'a>, IdentView<'a>, ExprView<'a>> {
-        let stmt = &self.view.ast.stmts[self.id];
-        match &stmt.kind {
-            StmtKind::Expr(expr) => StmtKind::Expr(ExprView::new(self.view, *expr)),
-            StmtKind::VarDecl { ident, expr, typ } => StmtKind::VarDecl {
+    pub fn kind(&self) -> StmtKindView<'a> {
+        match &self.node().kind {
+            StmtKind::Expr(expr) => StmtKindView::Expr(ExprView::new(self.view, *expr)),
+            StmtKind::VarDecl { ident, expr, typ } => StmtKindView::VarDecl {
                 ident: IdentView::new(self.view, *ident),
                 expr: ExprView::new(self.view, *expr),
                 typ: typ.map(|typ| TypeView::new(self.view, typ)),
             },
-            StmtKind::Assign { lhs, rhs } => StmtKind::Assign {
+            StmtKind::Assign { lhs, rhs } => StmtKindView::Assign {
                 lhs: ExprView::new(self.view, *lhs),
                 rhs: ExprView::new(self.view, *rhs),
             },
-            StmtKind::Return(expr) => {
-                StmtKind::Return(expr.map(|expr| ExprView::new(self.view, expr)))
+            StmtKind::Return(arena_id) => {
+                StmtKindView::Return(arena_id.map(|id| ExprView::new(self.view, id)))
             }
-            StmtKind::If { elifs, els } => StmtKind::If {
-                elifs: elifs
-                    .iter()
-                    .map(|cond_block| CondBlock {
-                        cond: ExprView::new(self.view, cond_block.cond),
-                        body: cond_block
-                            .body
-                            .iter()
-                            .map(|stmt| StmtView::new(self.view, *stmt))
-                            .collect(),
-                    })
-                    .collect(),
-                els: els.as_ref().map(|stmts| {
-                    stmts
-                        .iter()
-                        .map(|stmt| StmtView::new(self.view, *stmt))
-                        .collect()
-                }),
+            StmtKind::If { elifs, els } => StmtKindView::If {
+                elifs: CondBlockListView::new(self.view, *elifs),
+                els: els.map(|stmts| StmtListView::new(self.view, stmts)),
             },
-            StmtKind::While(cond_block) => StmtKind::While(CondBlock {
-                cond: ExprView::new(self.view, cond_block.cond),
-                body: cond_block
-                    .body
-                    .iter()
-                    .map(|stmt| StmtView::new(self.view, *stmt))
-                    .collect(),
-            }),
-            StmtKind::Break => StmtKind::Break,
-            StmtKind::Continue => StmtKind::Continue,
+            StmtKind::While(cond_block) => {
+                StmtKindView::While(CondBlockView::new(self.view, *cond_block))
+            }
+            StmtKind::Break => StmtKindView::Break,
+            StmtKind::Continue => StmtKindView::Continue,
         }
     }
 }

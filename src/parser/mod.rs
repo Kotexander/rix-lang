@@ -1,22 +1,23 @@
 use crate::{
+    arena::ArenaRange,
     ast::{
         Ast,
-        expr::{BinOp, ExprId, ExprKind, UniOp},
+        expr::{BinOp, Expr, ExprId, ExprKind, UniOp},
         idents::{Ident, IdentId},
         item::{Fun, Item, ItemId, Param, ParamType},
         literals::{NumLit, StrLit},
-        stmt::{CondBlock, StmtId, StmtKind},
-        typ::{TypeId, TypeKind},
+        stmt::{CondBlock, Stmt, StmtId, StmtKind},
+        typ::{Type, TypeId, TypeKind},
     },
     errors::Errors,
     lexer::{LexerWindow, Span, Tok, Token},
     strings::{Interner, StrId},
 };
 
-pub fn parse_number(src: &str) -> Result<u128, ()> {
+fn parse_number(src: &str) -> Result<u128, ()> {
     src.parse().map_err(|_| ())
 }
-pub fn parse_string(src: &str) -> Result<String, ()> {
+fn parse_string(src: &str) -> Result<String, ()> {
     let mut result = String::new();
     let mut chars = src.chars();
     if chars.next() != Some('"') {
@@ -115,13 +116,16 @@ impl<'input> Parser<'input> {
                 Ok(self
                     .ast
                     .types
-                    .add(TypeKind::Identifier(ident), identifier.span))
+                    .alloc(Type::new(TypeKind::Identifier(ident), identifier.span)))
             }
             Tok::Asterisk => {
                 let asterisk = self.lexer.advance().span;
                 let inner_type = self.parse_type()?;
                 let span = asterisk.join(&self.ast.types[inner_type].span);
-                Ok(self.ast.types.add(TypeKind::Ptr(inner_type), span))
+                Ok(self
+                    .ast
+                    .types
+                    .alloc(Type::new(TypeKind::Ptr(inner_type), span)))
             }
             _ => {
                 self.errors
@@ -149,17 +153,15 @@ impl<'input> Parser<'input> {
                 let number = self.lexer.advance();
                 let src = self.lexer.slice(number.span);
                 if let Ok(num) = parse_number(src) {
-                    let src_id = self.interner.intern(src);
                     let num_lit = NumLit {
                         num,
-                        src: src_id,
                         span: number.span,
                     };
                     let num_lit_id = self.ast.numbers.alloc(num_lit);
                     Ok(self
                         .ast
                         .exprs
-                        .add(ExprKind::Number(num_lit_id), number.span))
+                        .alloc(Expr::new(ExprKind::Number(num_lit_id), number.span)))
                 } else {
                     self.errors
                         .add(format!("invalid number literal: {}", src), number.span);
@@ -172,24 +174,22 @@ impl<'input> Parser<'input> {
                 Ok(self
                     .ast
                     .exprs
-                    .add(ExprKind::Identifier(ident), identifer.span))
+                    .alloc(Expr::new(ExprKind::Identifier(ident), identifer.span)))
             }
             Tok::String => {
                 let string = self.lexer.advance();
                 let src = self.lexer.slice(string.span);
                 if let Ok(str) = parse_string(src) {
-                    let src_id = self.interner.intern(src);
                     let str_id = self.interner.intern(str);
                     let str_lit = StrLit {
                         str: str_id,
-                        src: src_id,
                         span: string.span,
                     };
                     let str_lit_id = self.ast.strings.alloc(str_lit);
                     Ok(self
                         .ast
                         .exprs
-                        .add(ExprKind::String(str_lit_id), string.span))
+                        .alloc(Expr::new(ExprKind::String(str_lit_id), string.span)))
                 } else {
                     self.errors
                         .add(format!("invalid string literal: {}", src), string.span);
@@ -203,7 +203,7 @@ impl<'input> Parser<'input> {
                 Ok(self
                     .ast
                     .exprs
-                    .add(ExprKind::Group(expr), lparen.join(&rparen)))
+                    .alloc(Expr::new(ExprKind::Group(expr), lparen.join(&rparen))))
             }
             _ => {
                 let peek = *peek;
@@ -233,15 +233,16 @@ impl<'input> Parser<'input> {
                     let lbracket = self.lexer.advance().span;
                     let index = self.parse_expr()?;
                     let rbracket = self.expect_tokens(&[Tok::RBracket])?.span;
-                    expr = self.ast.exprs.add(
+                    expr = self.ast.exprs.alloc(Expr::new(
                         ExprKind::Index { base: expr, index },
                         self.ast.exprs[expr].span.join(&lbracket).join(&rbracket),
-                    );
+                    ));
                 }
                 Tok::LParen => {
                     self.lexer.advance(); // lparen
 
                     let mut args = Vec::new();
+                    // let mut start = None;
                     while self.lexer.peek().kind != Tok::RParen {
                         let arg = self.parse_expr()?;
                         args.push(arg);
@@ -269,12 +270,15 @@ impl<'input> Parser<'input> {
                             }
                         }
                     }
+
+                    let args = self.ast.exprs_lists.alloc_iter(args);
+
                     // next token should be rparen
                     let rparen = self.lexer.advance().span;
-                    expr = self.ast.exprs.add(
+                    expr = self.ast.exprs.alloc(Expr::new(
                         ExprKind::Call { callee: expr, args },
                         self.ast.exprs[expr].span.join(&rparen),
-                    );
+                    ));
                 }
                 _ => break,
             }
@@ -298,7 +302,10 @@ impl<'input> Parser<'input> {
         let op_token = self.lexer.advance();
         let expr = self.parse_prefix_expr()?;
         let span = op_token.span.join(&self.ast.exprs[expr].span);
-        Ok(self.ast.exprs.add(ExprKind::UniOp { op, expr }, span))
+        Ok(self
+            .ast
+            .exprs
+            .alloc(Expr::new(ExprKind::UniOp { op, expr }, span)))
     }
 
     fn parse_binop_expr(&mut self, min_prec: u8) -> Result<ExprId, ()> {
@@ -327,7 +334,10 @@ impl<'input> Parser<'input> {
             let rhs_span = self.ast.exprs[rhs].span;
             let span = lhs_span.join(&rhs_span);
 
-            lhs = self.ast.exprs.add(ExprKind::BinOp { op, lhs, rhs }, span);
+            lhs = self
+                .ast
+                .exprs
+                .alloc(Expr::new(ExprKind::BinOp { op, lhs, rhs }, span));
         }
 
         Ok(lhs)
@@ -355,7 +365,7 @@ impl<'input> Parser<'input> {
         Ok(self
             .ast
             .stmts
-            .add(StmtKind::VarDecl { ident, expr, typ }, span))
+            .alloc(Stmt::new(StmtKind::VarDecl { ident, expr, typ }, span)))
     }
 
     /// While
@@ -363,12 +373,13 @@ impl<'input> Parser<'input> {
     pub fn parse_while(&mut self) -> Result<StmtId, ()> {
         let while_ = self.expect_tokens(&[Tok::While])?;
         let cond = self.parse_expr()?;
-        let (body, body_span) = self.parse_block()?;
-        let span = while_.span.join(&body_span);
+        let (block, span) = self.parse_block()?;
+        let span = while_.span.join(&span);
+        let cond_block = self.ast.cond_blocks.alloc(CondBlock { cond, block });
         Ok(self
             .ast
             .stmts
-            .add(StmtKind::While(CondBlock { cond, body }), span))
+            .alloc(Stmt::new(StmtKind::While(cond_block), span)))
     }
 
     /// If
@@ -376,16 +387,17 @@ impl<'input> Parser<'input> {
     pub fn parse_if(&mut self) -> Result<StmtId, ()> {
         let if_ = self.expect_tokens(&[Tok::If])?;
         let cond = self.parse_expr()?;
-        let (body, main_span) = self.parse_block()?;
+        let (block, main_span) = self.parse_block()?;
 
-        let mut elifs = vec![CondBlock { cond, body }];
+        let mut elifs = vec![self.ast.cond_blocks.alloc(CondBlock { cond, block })];
         let mut els = None;
         let mut last_span = main_span;
         while self.lexer.match_(Tok::Else).is_ok() {
             if self.lexer.match_(Tok::If).is_ok() {
                 let cond = self.parse_expr()?;
                 let (block, block_span) = self.parse_block()?;
-                elifs.push(CondBlock { cond, body: block });
+                let cond_block = self.ast.cond_blocks.alloc(CondBlock { cond, block });
+                elifs.push(cond_block);
                 last_span = block_span;
             } else {
                 let (block, block_span) = self.parse_block()?;
@@ -395,8 +407,13 @@ impl<'input> Parser<'input> {
             }
         }
 
+        let elifs = self.ast.cond_blocks_lists.alloc_iter(elifs);
+
         let span = if_.span.join(&last_span);
-        Ok(self.ast.stmts.add(StmtKind::If { elifs, els }, span))
+        Ok(self
+            .ast
+            .stmts
+            .alloc(Stmt::new(StmtKind::If { elifs, els }, span)))
     }
 
     /// Stmt
@@ -421,7 +438,10 @@ impl<'input> Parser<'input> {
                 };
                 let semicolon = self.expect_tokens(&[Tok::Semicolon])?;
                 let span = return_.span.join(&semicolon.span);
-                Ok(self.ast.stmts.add(StmtKind::Return(expr), span))
+                Ok(self
+                    .ast
+                    .stmts
+                    .alloc(Stmt::new(StmtKind::Return(expr), span)))
             }
             Tok::If => self.parse_if(),
             Tok::While => self.parse_while(),
@@ -429,13 +449,13 @@ impl<'input> Parser<'input> {
                 let break_ = self.lexer.advance();
                 let semicolon = self.expect_tokens(&[Tok::Semicolon])?;
                 let span = break_.span.join(&semicolon.span);
-                Ok(self.ast.stmts.add(StmtKind::Break, span))
+                Ok(self.ast.stmts.alloc(Stmt::new(StmtKind::Break, span)))
             }
             Tok::Continue => {
                 let continue_ = self.lexer.advance();
                 let semicolon = self.expect_tokens(&[Tok::Semicolon])?;
                 let span = continue_.span.join(&semicolon.span);
-                Ok(self.ast.stmts.add(StmtKind::Continue, span))
+                Ok(self.ast.stmts.alloc(Stmt::new(StmtKind::Continue, span)))
             }
             _ => {
                 let expr = self.parse_expr()?;
@@ -446,11 +466,11 @@ impl<'input> Parser<'input> {
                     Ok(self
                         .ast
                         .stmts
-                        .add(StmtKind::Assign { lhs: expr, rhs }, span))
+                        .alloc(Stmt::new(StmtKind::Assign { lhs: expr, rhs }, span)))
                 } else {
                     let semicolon = self.expect_tokens(&[Tok::Semicolon])?;
                     let span = self.ast.exprs[expr].span.join(&semicolon.span);
-                    Ok(self.ast.stmts.add(StmtKind::Expr(expr), span))
+                    Ok(self.ast.stmts.alloc(Stmt::new(StmtKind::Expr(expr), span)))
                 }
             }
         }
@@ -486,12 +506,15 @@ impl<'input> Parser<'input> {
     }
     /// Block
     ///     = "{" Stmt* "}"
-    pub fn parse_block(&mut self) -> Result<(Vec<StmtId>, Span), ()> {
+    pub fn parse_block(&mut self) -> Result<(ArenaRange<StmtId>, Span), ()> {
         let lbrace = self.expect_tokens(&[Tok::LBrace])?;
-        let mut stmts = vec![];
 
+        let mut stmts = vec![];
         if let Ok(rbrace) = self.lexer.match_(Tok::RBrace) {
-            return Ok((stmts, lbrace.span.join(&rbrace)));
+            return Ok((
+                self.ast.stmts_lists.alloc_iter(stmts),
+                lbrace.span.join(&rbrace),
+            ));
         }
 
         while self.lexer.peek().kind != Tok::Eof {
@@ -505,6 +528,9 @@ impl<'input> Parser<'input> {
                 break;
             }
         }
+
+        let stmts = self.ast.stmts_lists.alloc_iter(stmts);
+
         let rbrace = self.expect_tokens(&[Tok::RBrace])?;
         Ok((stmts, lbrace.span.join(&rbrace.span)))
     }
@@ -513,7 +539,7 @@ impl<'input> Parser<'input> {
 impl<'input> Parser<'input> {
     /// ParamList
     ///     = "(" (identifier ":" Type ",")* (identifier ":" Type)? ")"
-    fn parse_param_list(&mut self) -> Result<Vec<Param>, ()> {
+    fn parse_param_list(&mut self) -> Result<ArenaRange<Param>, ()> {
         let _lparen = self.expect_tokens(&[Tok::LParen])?;
         let mut params = Vec::new();
 
@@ -555,7 +581,7 @@ impl<'input> Parser<'input> {
         // next token should be rparen
         let _rparen = self.lexer.advance();
 
-        Ok(params)
+        Ok(self.ast.params.alloc_iter(params))
     }
     /// Fun
     ///     = "fun" identifier ParamList (":" Type)? (Block | ";")

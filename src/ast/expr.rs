@@ -1,32 +1,41 @@
-use super::arena::{Arena, ArenaId};
-use super::idents::{IdentId, IdentView};
-use super::literals::{NumLitId, NumLitView, StrLitId, StrLitView};
-use crate::lexer;
+use super::{
+    idents::{IdentId, IdentView},
+    literals::{NumLitId, NumLitView, StrLitId, StrLitView},
+};
+use crate::{
+    arena::{ArenaId, ArenaRange},
+    define_view, lexer,
+};
 
-pub type ExprArena = Arena<Expr>;
 pub type ExprId = ArenaId<Expr>;
 
-impl ExprArena {
-    pub fn add(&mut self, kind: ExprKind, span: lexer::Span) -> ExprId {
-        self.alloc(Expr::new(kind, span))
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExprKind {
+    Identifier(IdentId),
+    Number(NumLitId),
+    String(StrLitId),
+
+    Group(ExprId),
+    BinOp {
+        op: BinOp,
+        lhs: ExprId,
+        rhs: ExprId,
+    },
+    UniOp {
+        op: UniOp,
+        expr: ExprId,
+    },
+    Index {
+        base: ExprId,
+        index: ExprId,
+    },
+    Call {
+        callee: ExprId,
+        args: ArenaRange<ExprId>,
+    },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExprKind<I = IdentId, N = NumLitId, S = StrLitId, E = ExprId> {
-    Identifier(I),
-    Number(N),
-    String(S),
-
-    Group(E),
-    BinOp { op: BinOp, lhs: E, rhs: E },
-    UniOp { op: UniOp, expr: E },
-    Index { base: E, index: E },
-    Call { callee: E, args: Vec<E> },
-}
-pub type ExprKindView<'a> = ExprKind<IdentView<'a>, NumLitView<'a>, StrLitView<'a>, ExprView<'a>>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Expr {
     pub kind: ExprKind,
     pub span: lexer::Span,
@@ -37,43 +46,73 @@ impl Expr {
     }
 }
 
-pub struct ExprView<'a> {
+#[derive(Debug, Clone, Copy)]
+pub struct ExprViewList<'a> {
     view: super::AstView<'a>,
-    id: ExprId,
+    ids: ArenaRange<ExprId>,
 }
+impl<'a> ExprViewList<'a> {
+    pub fn new(view: super::AstView<'a>, ids: ArenaRange<ExprId>) -> Self {
+        Self { ids, view }
+    }
+    pub fn iter(&self) -> impl Iterator<Item = ExprView<'a>> {
+        self.view.ast.exprs_lists[self.ids]
+            .iter()
+            .map(|id| ExprView::new(self.view, *id))
+    }
+}
+
+/// See [`ExprKind`]
+#[derive(Debug, Clone, Copy)]
+pub enum ExprKindView<'a> {
+    Identifier(IdentView<'a>),
+    Number(NumLitView<'a>),
+    String(StrLitView<'a>),
+
+    Group(ExprView<'a>),
+    BinOp {
+        op: BinOp,
+        lhs: ExprView<'a>,
+        rhs: ExprView<'a>,
+    },
+    UniOp {
+        op: UniOp,
+        expr: ExprView<'a>,
+    },
+    Index {
+        base: ExprView<'a>,
+        index: ExprView<'a>,
+    },
+    Call {
+        callee: ExprView<'a>,
+        args: ExprViewList<'a>,
+    },
+}
+
+define_view!(ExprView, Expr, ExprId, exprs);
 impl<'a> ExprView<'a> {
-    pub fn new(view: super::AstView<'a>, id: ExprId) -> Self {
-        Self { id, view }
-    }
-    pub fn id(&self) -> ExprId {
-        self.id
-    }
-    pub fn span(&self) -> lexer::Span {
-        self.view.ast.exprs[self.id].span
-    }
     pub fn kind(&self) -> ExprKindView<'a> {
-        let expr = &self.view.ast.exprs[self.id];
-        match &expr.kind {
-            ExprKind::Identifier(id) => ExprKind::Identifier(IdentView::new(self.view, *id)),
-            ExprKind::Number(id) => ExprKind::Number(NumLitView::new(self.view, *id)),
-            ExprKind::String(id) => ExprKind::String(StrLitView::new(self.view, *id)),
-            ExprKind::Group(id) => ExprKind::Group(Self::new(self.view, *id)),
-            ExprKind::BinOp { op, lhs, rhs } => ExprKind::BinOp {
+        match &self.node().kind {
+            ExprKind::Identifier(id) => ExprKindView::Identifier(IdentView::new(self.view, *id)),
+            ExprKind::Number(id) => ExprKindView::Number(NumLitView::new(self.view, *id)),
+            ExprKind::String(id) => ExprKindView::String(StrLitView::new(self.view, *id)),
+            ExprKind::Group(id) => ExprKindView::Group(Self::new(self.view, *id)),
+            ExprKind::BinOp { op, lhs, rhs } => ExprKindView::BinOp {
                 op: *op,
                 lhs: Self::new(self.view, *lhs),
                 rhs: Self::new(self.view, *rhs),
             },
-            ExprKind::UniOp { op, expr } => ExprKind::UniOp {
+            ExprKind::UniOp { op, expr } => ExprKindView::UniOp {
                 op: *op,
                 expr: Self::new(self.view, *expr),
             },
-            ExprKind::Index { base, index } => ExprKind::Index {
+            ExprKind::Index { base, index } => ExprKindView::Index {
                 base: Self::new(self.view, *base),
                 index: Self::new(self.view, *index),
             },
-            ExprKind::Call { callee, args } => ExprKind::Call {
+            ExprKind::Call { callee, args } => ExprKindView::Call {
                 callee: Self::new(self.view, *callee),
-                args: args.iter().map(|arg| Self::new(self.view, *arg)).collect(),
+                args: ExprViewList::new(self.view, *args),
             },
         }
     }

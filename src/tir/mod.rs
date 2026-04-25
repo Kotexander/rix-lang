@@ -249,7 +249,7 @@ impl<'a> FunBodyBuilder<'a> {
                 blk
             }
             ast::stmt::StmtKind::VarDecl { ident, expr, .. } => {
-                let def = self.analysis.ident_map[&ident.id()];
+                let def = self.analysis.names[&ident.id()];
                 let val = self.build_expr(expr, blk);
                 let block = &mut self.fun.blocks[blk as usize];
                 block.build_store(def, val);
@@ -258,7 +258,7 @@ impl<'a> FunBodyBuilder<'a> {
             }
             ast::stmt::StmtKind::Assign { lhs, rhs } => {
                 if let ast::expr::ExprKind::Identifier(ident) = &lhs.kind() {
-                    let def = self.analysis.ident_map[&ident.id()];
+                    let def = self.analysis.names[&ident.id()];
                     let val = self.build_expr(rhs, blk);
                     let block = &mut self.fun.blocks[blk as usize];
                     block.build_store(def, val);
@@ -359,7 +359,7 @@ impl<'a> FunBodyBuilder<'a> {
             ast::expr::ExprKind::Identifier(ident) => {
                 let block = &mut self.fun.blocks[blk as usize];
                 let tmp = self.tmp.inc();
-                block.build_load(tmp, self.analysis.ident_map[&ident.id()]);
+                block.build_load(tmp, self.analysis.names[&ident.id()]);
                 tmp.into()
             }
             ast::expr::ExprKind::Number(num) => {
@@ -407,7 +407,7 @@ impl<'a> FunBodyBuilder<'a> {
                 let ast::expr::ExprKind::Identifier(ident) = base.kind() else {
                     panic!();
                 };
-                let base_id = self.analysis.ident_map[&ident.id()];
+                let base_id = self.analysis.names[&ident.id()];
                 let base_val = self.build_expr(base, blk);
                 // let base_val = self.build_expr(base, blk);
 
@@ -423,7 +423,7 @@ impl<'a> FunBodyBuilder<'a> {
                 let ast::expr::ExprKind::Identifier(ident) = callee.kind() else {
                     panic!();
                 };
-                let callee_val = self.analysis.ident_map[&ident.id()];
+                let callee_val = self.analysis.names[&ident.id()];
 
                 let mut arg_vals = Vec::new();
                 for arg in args {
@@ -500,7 +500,7 @@ pub fn lower(ast: ast::AstView, analysis: analysis::Analysis) -> Tir {
 }
 
 fn lower_fun(analysis: &analysis::Analysis, fun: &ast::item::FunView) -> Fun {
-    let fun_def_id = analysis.ident_map[&fun.ident.id()];
+    let fun_def_id = analysis.names[&fun.ident.id()];
 
     let args: Vec<_> = fun
         .params
@@ -512,7 +512,7 @@ fn lower_fun(analysis: &analysis::Analysis, fun: &ast::item::FunView) -> Fun {
                 None
             }
         })
-        .map(|ident| analysis.ident_map[&ident])
+        .map(|ident| analysis.names[&ident])
         .collect();
 
     if fun.body.is_none() {

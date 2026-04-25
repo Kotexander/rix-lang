@@ -1,38 +1,46 @@
 use super::{
-    arena::{Arena, ArenaId},
     idents::{IdentId, IdentView},
-    stmt::{StmtId, StmtView},
+    stmt::{StmtId, StmtListView},
     typ::{TypeId, TypeView},
 };
-use crate::lexer;
+use crate::{
+    arena::{ArenaId, ArenaRange},
+    lexer,
+};
 
-pub type ItemArena = Arena<Item>;
 pub type ItemId = ArenaId<Item>;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Item<T = TypeId, S = StmtId, I = IdentId> {
-    Fun(Fun<T, S, I>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Fun<T = TypeId, S = StmtId, I = IdentId> {
-    pub ident: I,
-    pub params: Vec<Param<T, I>>,
-    pub ret_type: Option<T>,
-    pub body: Option<Vec<S>>,
-}
-pub type FunView<'a> = Fun<TypeView<'a>, StmtView<'a>, IdentView<'a>>;
+pub type ParamId = ArenaId<Param>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ParamType<T = TypeId> {
-    Type(T),
+pub enum Item {
+    Fun(Fun),
+}
+impl Item {
+    pub fn as_fun(&self) -> Option<&Fun> {
+        match self {
+            Item::Fun(fun) => Some(fun),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fun {
+    pub ident: IdentId,
+    pub params: ArenaRange<Param>,
+    pub ret_type: Option<TypeId>,
+    pub body: Option<ArenaRange<StmtId>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamType {
+    Type(TypeId),
     Variadic(lexer::Span),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Param<T = TypeId, I = IdentId> {
-    pub typ: ParamType<T>,
-    pub ident: I,
+pub struct Param {
+    pub typ: ParamType,
+    pub ident: IdentId,
 }
 impl Param {
     pub fn new(typ: ParamType, ident: IdentId) -> Self {
@@ -40,6 +48,69 @@ impl Param {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum ParamTypeView<'a> {
+    Type(TypeView<'a>),
+    Variadic(lexer::Span),
+}
+#[derive(Debug, Clone, Copy)]
+pub struct ParamView<'a> {
+    view: super::AstView<'a>,
+    id: ParamId,
+}
+impl<'a> ParamView<'a> {
+    pub fn new(view: super::AstView<'a>, id: ParamId) -> Self {
+        Self { id, view }
+    }
+    pub fn id(&self) -> ParamId {
+        self.id
+    }
+    pub fn typ(&self) -> ParamTypeView<'a> {
+        match &self.node().typ {
+            ParamType::Type(id) => ParamTypeView::Type(TypeView::new(self.view, *id)),
+            ParamType::Variadic(span) => ParamTypeView::Variadic(*span),
+        }
+    }
+    pub fn ident(&self) -> IdentView<'a> {
+        IdentView::new(self.view, self.node().ident)
+    }
+
+    pub fn node(&self) -> &'a Param {
+        &self.view.ast.params[self.id]
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FunView<'a> {
+    view: super::AstView<'a>,
+    fun: &'a Fun,
+}
+impl<'a> FunView<'a> {
+    pub fn new(view: super::AstView<'a>, fun: &'a Fun) -> Self {
+        Self { view, fun }
+    }
+    pub fn ident(&self) -> IdentView<'a> {
+        IdentView::new(self.view, self.fun.ident)
+    }
+    pub fn params(&self) -> impl Iterator<Item = ParamView<'a>> {
+        self.fun
+            .params
+            .iter()
+            .map(|id| ParamView::new(self.view, id))
+    }
+    pub fn ret_type(&self) -> Option<TypeView<'a>> {
+        self.fun.ret_type.map(|id| TypeView::new(self.view, id))
+    }
+    pub fn body(&self) -> Option<StmtListView<'a>> {
+        self.fun.body.map(|ids| StmtListView::new(self.view, ids))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ItemKindView<'a> {
+    Fun(FunView<'a>),
+}
+#[derive(Debug, Clone, Copy)]
 pub struct ItemView<'a> {
     view: super::AstView<'a>,
     id: ItemId,
@@ -51,31 +122,13 @@ impl<'a> ItemView<'a> {
     pub fn id(&self) -> ItemId {
         self.id
     }
-    /// TODO: don't allocate
-    pub fn kind(&self) -> Item<TypeView<'a>, StmtView<'a>, IdentView<'a>> {
-        let item = &self.view.ast.items[self.id];
-        match &item {
-            Item::Fun(fun) => Item::Fun(FunView {
-                ident: IdentView::new(self.view, fun.ident),
-                params: fun
-                    .params
-                    .iter()
-                    .map(|param| Param {
-                        typ: match param.typ {
-                            ParamType::Type(typ) => ParamType::Type(TypeView::new(self.view, typ)),
-                            ParamType::Variadic(span) => ParamType::Variadic(span),
-                        },
-                        ident: IdentView::new(self.view, param.ident),
-                    })
-                    .collect(),
-                ret_type: fun.ret_type.map(|typ| TypeView::new(self.view, typ)),
-                body: fun.body.as_ref().map(|stmts| {
-                    stmts
-                        .iter()
-                        .map(|stmt| StmtView::new(self.view, *stmt))
-                        .collect()
-                }),
-            }),
+    pub fn kind(&self) -> ItemKindView<'a> {
+        match &self.node() {
+            Item::Fun(fun) => ItemKindView::Fun(FunView::new(self.view, fun)),
         }
+    }
+
+    pub fn node(&self) -> &'a Item {
+        &self.view.ast.items[self.id]
     }
 }

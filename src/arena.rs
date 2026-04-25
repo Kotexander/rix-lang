@@ -51,8 +51,23 @@ impl<T> Arena<T> {
         self.items.push(item);
         ArenaId::new(id)
     }
+    pub fn alloc_iter(&mut self, items: impl IntoIterator<Item = T>) -> ArenaRange<T> {
+        let start = self.items.len() as u32;
+        self.items.extend(items);
+        let end = self.items.len() as u32;
+        ArenaRange::new(ArenaId::new(start), ArenaId::new(end))
+    }
     pub fn get(&self, id: ArenaId<T>) -> Option<&T> {
         self.items.get(id.get() as usize)
+    }
+    pub fn get_mut(&mut self, id: ArenaId<T>) -> Option<&mut T> {
+        self.items.get_mut(id.get() as usize)
+    }
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
     }
 }
 impl<'a, T> IntoIterator for &'a Arena<T> {
@@ -78,5 +93,43 @@ impl<T> std::ops::Index<ArenaId<T>> for Arena<T> {
     type Output = T;
     fn index(&self, id: ArenaId<T>) -> &Self::Output {
         &self.items[id.get() as usize]
+    }
+}
+impl<T> std::ops::Index<ArenaRange<T>> for Arena<T> {
+    type Output = [T];
+    fn index(&self, range: ArenaRange<T>) -> &Self::Output {
+        &self.items[range.start as usize..range.end as usize]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ArenaRange<T> {
+    start: u32,
+    end: u32,
+    _marker: std::marker::PhantomData<T>,
+}
+impl<T> ArenaRange<T> {
+    pub fn new(start: ArenaId<T>, end: ArenaId<T>) -> Self {
+        Self {
+            start: start.get(),
+            end: end.get(),
+            _marker: std::marker::PhantomData,
+        }
+    }
+    // pub fn new_empty() -> Self {
+    //     Self {
+    //         start: 0,
+    //         end: 0,
+    //         _marker: std::marker::PhantomData,
+    //     }
+    // }
+    pub fn len(&self) -> u32 {
+        self.end - self.start
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    pub fn iter(&self) -> impl Iterator<Item = ArenaId<T>> {
+        (self.start..self.end).map(ArenaId::new)
     }
 }

@@ -4,8 +4,8 @@ use crate::{
         expr::{ExprKind, ExprView, UniOp},
         idents::IdentId,
         item::{FunView, Item, ParamType},
-        stmt::{StmtKind, StmtView},
-        typ::{TypeKind, TypeView},
+        stmt::{StmtKindView, StmtView},
+        typ::{TypeKindView, TypeView},
     },
     errors::Errors,
     tir::{
@@ -16,12 +16,13 @@ use crate::{
 };
 use std::collections::HashMap;
 
+mod names;
 mod scopes;
 
 pub struct Analysis {
     pub defs: tir::def::Defs,
     pub typs: tir::typ::Typs,
-    pub ident_map: HashMap<IdentId, DefId>,
+    pub names: HashMap<IdentId, DefId>,
 }
 
 pub fn analyse(view: AstView, errors: &mut Errors) -> Analysis {
@@ -51,7 +52,7 @@ pub fn analyse(view: AstView, errors: &mut Errors) -> Analysis {
     Analysis {
         defs: analyser.defs,
         typs: analyser.typs,
-        ident_map: analyser.ident_map,
+        names: analyser.ident_map,
     }
 }
 
@@ -181,10 +182,10 @@ impl<'a> Analyser<'a> {
     }
     fn analyse_stmt(&mut self, stmt: &StmtView, block_state: &mut BlockState) {
         match &stmt.kind() {
-            StmtKind::Expr(expr) => {
+            StmtKindView::Expr(expr) => {
                 self.analyse_expr(expr);
             }
-            StmtKind::VarDecl { ident, expr, typ } => {
+            StmtKindView::VarDecl { ident, expr, typ } => {
                 let var_typ = typ.as_ref().map(|typ| self.analyse_type(typ));
                 let expr_typ = self.analyse_expr(expr);
                 if let Some(var_typ) = var_typ
@@ -204,7 +205,7 @@ impl<'a> Analyser<'a> {
                 let _ = self.scopes.insert_def(ident.str_id(), def); // allow shadowing
                 self.ident_map.insert(ident.id(), def);
             }
-            StmtKind::Assign { lhs, rhs } => {
+            StmtKindView::Assign { lhs, rhs } => {
                 let lhs_type = self.analyse_expr(lhs);
                 let rhs_type = self.analyse_expr(rhs);
                 if lhs_type != rhs_type {
@@ -217,7 +218,7 @@ impl<'a> Analyser<'a> {
                     );
                 }
             }
-            StmtKind::Return(expr) => {
+            StmtKindView::Return(expr) => {
                 let expr_type = expr
                     .as_ref()
                     .map(|expr| self.analyse_expr(expr))
@@ -232,7 +233,7 @@ impl<'a> Analyser<'a> {
                     );
                 }
             }
-            StmtKind::If { elifs, els } => {
+            StmtKindView::If { elifs, els } => {
                 for cond_block in elifs {
                     self.analyse_cond_block(cond_block, block_state, false);
                 }
@@ -242,16 +243,16 @@ impl<'a> Analyser<'a> {
                     self.scopes.pop_scope();
                 }
             }
-            StmtKind::While(cond_block) => {
+            StmtKindView::While(cond_block) => {
                 self.analyse_cond_block(cond_block, block_state, true);
             }
-            StmtKind::Break => {
+            StmtKindView::Break => {
                 if block_state.loop_depth == 0 {
                     self.errors
                         .add("cannot 'break' outside of a loop", stmt.span());
                 }
             }
-            StmtKind::Continue => {
+            StmtKindView::Continue => {
                 if block_state.loop_depth == 0 {
                     self.errors
                         .add("cannot 'continue' outside of a loop", stmt.span());
@@ -480,7 +481,7 @@ impl<'a> Analyser<'a> {
     }
     fn analyse_type(&mut self, typ: &TypeView) -> tir::typ::TypeId {
         match &typ.kind() {
-            TypeKind::Identifier(ident) => {
+            TypeKindView::Identifier(ident) => {
                 if let Some(typ) = self.scopes.get_typ(ident.str_id()) {
                     typ
                 } else {
@@ -489,7 +490,7 @@ impl<'a> Analyser<'a> {
                     self.typs.error()
                 }
             }
-            TypeKind::Ptr(inner) => {
+            TypeKindView::Ptr(inner) => {
                 let inner_typ = self.analyse_type(inner);
                 self.typs.ptr(inner_typ)
             }

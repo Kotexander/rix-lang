@@ -1,35 +1,35 @@
 use super::{
-    expr::{BinOp, ExprKind, ExprView, UniOp},
-    item::{FunView, ParamType},
-    stmt::{CondBlockView, StmtKind, StmtView},
-    typ::{TypeKind, TypeView},
+    expr::{BinOp, ExprKindView, ExprView, UniOp},
+    item::{FunView, ParamTypeView},
+    stmt::{CondBlockView, StmtKindView, StmtListView, StmtView},
+    typ::{TypeKindView, TypeView},
 };
 
 impl<'a> super::AstView<'a> {
     pub fn fmt_fun(&self, f: &mut std::fmt::Formatter<'_>, fun: &FunView) -> std::fmt::Result {
-        write!(f, "fun {}(", fun.ident.str())?;
-        for (i, param) in fun.params.iter().enumerate() {
+        write!(f, "fun {}(", fun.ident().str())?;
+        for (i, param) in fun.params().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}: ", param.ident.str())?;
-            match &param.typ {
-                ParamType::Type(typ) => {
+            write!(f, "{}: ", param.ident().str())?;
+            match &param.typ() {
+                ParamTypeView::Type(typ) => {
                     self.fmt_type(f, typ)?;
                 }
-                ParamType::Variadic(_) => {
+                ParamTypeView::Variadic(_) => {
                     write!(f, "...")?;
                 }
             }
         }
         write!(f, ")")?;
-        if let Some(ret_type) = &fun.ret_type {
+        if let Some(ret_type) = &fun.ret_type() {
             write!(f, " : ")?;
             self.fmt_type(f, ret_type)?;
         } else {
             write!(f, " : void")?;
         }
-        if let Some(body) = &fun.body {
+        if let Some(body) = &fun.body() {
             self.fmt_block(f, " ", 0, body)?;
             writeln!(f, "\n")?;
         } else {
@@ -39,11 +39,11 @@ impl<'a> super::AstView<'a> {
     }
     pub fn fmt_type(&self, f: &mut std::fmt::Formatter<'_>, typ: &TypeView) -> std::fmt::Result {
         match &typ.kind() {
-            TypeKind::Identifier(ident) => {
+            TypeKindView::Identifier(ident) => {
                 let ident = ident.str();
                 write!(f, "{ident}")
             }
-            TypeKind::Ptr(inner) => {
+            TypeKindView::Ptr(inner) => {
                 write!(f, "*")?;
                 self.fmt_type(f, inner)
             }
@@ -51,45 +51,45 @@ impl<'a> super::AstView<'a> {
     }
     pub fn fmt_expr(&self, f: &mut std::fmt::Formatter<'_>, expr: &ExprView) -> std::fmt::Result {
         match &expr.kind() {
-            ExprKind::Identifier(id) => {
+            ExprKindView::Identifier(id) => {
                 write!(f, "{}", id.str())
             }
-            ExprKind::Number(id) => {
+            ExprKindView::Number(id) => {
+                write!(f, "{}", id.str())
+            }
+            ExprKindView::String(id) => {
                 write!(f, "{}", id.src())
             }
-            ExprKind::String(id) => {
-                write!(f, "{}", id.src())
-            }
-            ExprKind::Group(expr) => {
+            ExprKindView::Group(expr) => {
                 write!(f, "(")?;
                 self.fmt_expr(f, expr)?;
                 write!(f, ")")
             }
-            ExprKind::BinOp { op, lhs, rhs } => {
+            ExprKindView::BinOp { op, lhs, rhs } => {
                 self.fmt_expr(f, lhs)?;
                 let op_str = binop_str(*op);
                 write!(f, " {op_str} ")?;
                 self.fmt_expr(f, rhs)
             }
-            ExprKind::UniOp { op, expr } => {
+            ExprKindView::UniOp { op, expr } => {
                 let op_str = uniop_str(*op);
                 write!(f, "{op_str}")?;
                 self.fmt_expr(f, expr)
             }
-            ExprKind::Index { base, index } => {
+            ExprKindView::Index { base, index } => {
                 self.fmt_expr(f, base)?;
                 write!(f, "[")?;
                 self.fmt_expr(f, index)?;
                 write!(f, "]")
             }
-            ExprKind::Call { callee, args } => {
+            ExprKindView::Call { callee, args } => {
                 self.fmt_expr(f, callee)?;
                 write!(f, "(")?;
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    self.fmt_expr(f, arg)?;
+                    self.fmt_expr(f, &arg)?;
                 }
                 write!(f, ")")
             }
@@ -106,11 +106,11 @@ impl<'a> super::AstView<'a> {
             write!(f, "    ")?;
         }
         match &stmt.kind() {
-            StmtKind::Expr(expr) => {
+            StmtKindView::Expr(expr) => {
                 self.fmt_expr(f, expr)?;
                 write!(f, ";")
             }
-            StmtKind::Return(expr) => {
+            StmtKindView::Return(expr) => {
                 write!(f, "return")?;
                 if let Some(expr) = expr {
                     write!(f, " ")?;
@@ -118,7 +118,7 @@ impl<'a> super::AstView<'a> {
                 }
                 write!(f, ";")
             }
-            StmtKind::VarDecl { ident, expr, typ } => {
+            StmtKindView::VarDecl { ident, expr, typ } => {
                 write!(f, "var {}", ident.str())?;
                 if let Some(typ) = typ {
                     write!(f, " : ")?;
@@ -128,28 +128,29 @@ impl<'a> super::AstView<'a> {
                 self.fmt_expr(f, expr)?;
                 write!(f, ";")
             }
-            StmtKind::Assign { lhs, rhs } => {
+            StmtKindView::Assign { lhs, rhs } => {
                 self.fmt_expr(f, lhs)?;
                 write!(f, " = ")?;
                 self.fmt_expr(f, rhs)?;
                 write!(f, ";")
             }
-            StmtKind::If { elifs, els } => {
-                self.fmt_cond_block(f, "if", indents, &elifs[0])?;
+            StmtKindView::If { elifs, els } => {
+                let mut elif_iter = elifs.iter();
+                self.fmt_cond_block(f, "if", indents, &elif_iter.next().unwrap())?;
 
-                for cond_block in &elifs[1..] {
-                    self.fmt_cond_block(f, " else if", indents, cond_block)?;
+                for cond_block in elif_iter {
+                    self.fmt_cond_block(f, " else if", indents, &cond_block)?;
                 }
                 if let Some(els) = els {
                     self.fmt_block(f, " else ", indents, els)?;
                 }
                 Ok(())
             }
-            StmtKind::While(cond_block) => self.fmt_cond_block(f, "while", indents, cond_block),
-            StmtKind::Break => {
+            StmtKindView::While(cond_block) => self.fmt_cond_block(f, "while", indents, cond_block),
+            StmtKindView::Break => {
                 write!(f, "break;")
             }
-            StmtKind::Continue => {
+            StmtKindView::Continue => {
                 write!(f, "continue;")
             }
         }
@@ -162,20 +163,20 @@ impl<'a> super::AstView<'a> {
         cond_block: &CondBlockView,
     ) -> std::fmt::Result {
         write!(f, "{prefix} ")?;
-        self.fmt_expr(f, &cond_block.cond)?;
-        self.fmt_block(f, " ", indents, &cond_block.body)
+        self.fmt_expr(f, &cond_block.cond())?;
+        self.fmt_block(f, " ", indents, &cond_block.block())
     }
     fn fmt_block(
         &self,
         f: &mut std::fmt::Formatter<'_>,
         prefix: &str,
         indents: u32,
-        block: &[StmtView],
+        block: &StmtListView,
     ) -> std::fmt::Result {
         write!(f, "{prefix}{{")?;
-        for stmt in block {
+        for stmt in block.iter() {
             writeln!(f)?;
-            self.fmt_stmt(f, indents + 1, stmt)?;
+            self.fmt_stmt(f, indents + 1, &stmt)?;
         }
         writeln!(f)?;
         for _ in 0..indents {
