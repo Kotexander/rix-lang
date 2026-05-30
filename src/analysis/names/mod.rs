@@ -3,7 +3,7 @@ use crate::{
         AstView,
         expr::{ExprKindView, ExprView},
         idents::IdentView,
-        item::{FunView, ItemKindView},
+        item::{FunView, ItemKindView, ParamTypeView},
         stmt::{StmtKindView, StmtView},
         typ::{TypeKindView, TypeView},
     },
@@ -41,16 +41,13 @@ impl ScopeResolver {
         self.scopes.insert_typ(ident.str_id(), typ_id)
     }
 
-    pub fn resolve_def<F>(&mut self, ident: IdentView, err: F) -> Option<DefId>
+    pub fn resolve_def<F>(&mut self, ident: IdentView, err: F) -> DefId
     where
-        F: FnOnce(),
+        F: FnOnce() -> DefId,
     {
-        let Some(def) = self.scopes.get_def(ident.str_id()) else {
-            err();
-            return None;
-        };
+        let def = self.scopes.get_def(ident.str_id()).unwrap_or_else(err);
         self.resolutions.set_def(ident.id(), def);
-        Some(def)
+        def
     }
     pub fn resolve_typ<F>(&mut self, ident: IdentView, err: F) -> TypId
     where
@@ -82,17 +79,16 @@ impl<'a> State<'a> {
                 .unwrap();
         }
     }
-    fn get_type(&mut self, typ: TypeView) -> TypId {
+    fn resolve_type(&mut self, typ: TypeView) {
         match typ.kind() {
-            TypeKindView::Identifier(ident) => self.scope_resolver.resolve_typ(ident, || {
-                self.errors
-                    .add(format!("unknown type `{}`", ident.str()), ident.span());
-                self.typs.error()
-            }),
-            TypeKindView::Ptr(inner) => {
-                let inner = self.get_type(inner);
-                self.typs.ptr(inner)
+            TypeKindView::Identifier(ident) => {
+                self.scope_resolver.resolve_typ(ident, || {
+                    self.errors
+                        .add(format!("unknown type `{}`", ident.str()), ident.span());
+                    self.typs.error()
+                });
             }
+            TypeKindView::Ptr(inner) => self.resolve_type(inner),
         }
     }
     fn declare_fun(&mut self, fun: FunView) -> DefId {
@@ -106,6 +102,17 @@ impl<'a> State<'a> {
             );
             return prev;
         }
+
+        for param in fun.params() {
+            if let ParamTypeView::Type(typ) = param.typ() {
+                self.resolve_type(typ);
+            }
+        }
+
+        if let Some(ret_type) = fun.ret_type() {
+            self.resolve_type(ret_type);
+        }
+
         def
     }
     fn resolve_fun(&mut self, fun: FunView) {
@@ -134,13 +141,13 @@ impl<'a> State<'a> {
     fn resolve_stmt(&mut self, stmt: StmtView) {
         match stmt.kind() {
             StmtKindView::Expr(expr_view) => self.resolve_expr(expr_view),
-            StmtKindView::VarDecl {
-                ident,
-                expr,
-                typ: _,
-            } => {
+            StmtKindView::VarDecl { ident, expr, typ } => {
                 // resolve expr first
                 self.resolve_expr(expr);
+
+                if let Some(typ) = typ {
+                    self.resolve_type(typ);
+                }
 
                 let def = self.defs.alloc(Def { ident: ident.id() });
                 // allow shadowing
@@ -192,6 +199,8 @@ impl<'a> State<'a> {
                         format!("unknown identifier `{}`", ident.str()),
                         ident.span(),
                     );
+                    // TODO: introduce a special "error" def for this case
+                    self.defs.alloc(Def { ident: ident.id() })
                 });
             }
             ExprKindView::Number(_) => {}
