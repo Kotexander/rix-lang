@@ -1,4 +1,4 @@
-// mod analysis;
+mod analysis;
 mod arena;
 mod ast;
 mod errors;
@@ -6,7 +6,7 @@ mod lexer;
 // mod llvm;
 mod parser;
 mod strings;
-// mod tir;
+mod tir;
 
 fn main() {
     test();
@@ -28,7 +28,7 @@ fn test() {
 
     println!("Parsed AST:\n{}", view);
 
-    // let analysis = analysis::analyse(view, &mut errors);
+    let analysis = analysis::analyse(view, &mut errors);
     // let tir = tir::lower(view, analysis);
     // println!("Lowered TIR:\n{}", tir.view(&interner));
 

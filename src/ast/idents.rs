@@ -2,7 +2,7 @@ use crate::{arena::ArenaId, define_view, lexer, strings::StrId};
 
 pub type IdentId = ArenaId<Ident>;
 
-/// An identifier with its original span information.
+/// A name with its original span information.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ident {
     pub str: StrId,

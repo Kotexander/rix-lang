@@ -15,13 +15,6 @@ pub type ParamId = ArenaId<Param>;
 pub enum Item {
     Fun(Fun),
 }
-impl Item {
-    pub fn as_fun(&self) -> Option<&Fun> {
-        match self {
-            Item::Fun(fun) => Some(fun),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fun {
@@ -84,10 +77,14 @@ impl<'a> ParamView<'a> {
 pub struct FunView<'a> {
     view: super::AstView<'a>,
     fun: &'a Fun,
+    id: ItemId,
 }
 impl<'a> FunView<'a> {
-    pub fn new(view: super::AstView<'a>, fun: &'a Fun) -> Self {
-        Self { view, fun }
+    pub fn new(view: super::AstView<'a>, fun: &'a Fun, id: ItemId) -> Self {
+        Self { view, fun, id }
+    }
+    pub fn id(&self) -> ItemId {
+        self.id
     }
     pub fn ident(&self) -> IdentView<'a> {
         IdentView::new(self.view, self.fun.ident)
@@ -124,10 +121,9 @@ impl<'a> ItemView<'a> {
     }
     pub fn kind(&self) -> ItemKindView<'a> {
         match &self.node() {
-            Item::Fun(fun) => ItemKindView::Fun(FunView::new(self.view, fun)),
+            Item::Fun(fun) => ItemKindView::Fun(FunView::new(self.view, fun, self.id)),
         }
     }
-
     pub fn node(&self) -> &'a Item {
         &self.view.ast.items[self.id]
     }

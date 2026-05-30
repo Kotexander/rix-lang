@@ -116,7 +116,7 @@ macro_rules! define_view {
             }
 
             #[inline]
-            fn node(&self) -> &'a $node_name {
+            pub fn node(&self) -> &'a $node_name {
                 &self.view.ast.$arena_field[self.id]
             }
         }

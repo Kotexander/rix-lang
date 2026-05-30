@@ -1,6 +1,5 @@
 use std::num::NonZeroU32;
 
-#[derive(Debug)]
 #[repr(transparent)]
 pub struct ArenaId<T>(NonZeroU32, std::marker::PhantomData<T>);
 impl<T> ArenaId<T> {
@@ -13,6 +12,11 @@ impl<T> ArenaId<T> {
     #[inline]
     pub fn get(self) -> u32 {
         self.0.get() - 1
+    }
+
+    #[inline]
+    pub fn idx(self) -> usize {
+        self.get() as usize
     }
 }
 impl<T> Clone for ArenaId<T> {
@@ -30,6 +34,11 @@ impl<T> Eq for ArenaId<T> {}
 impl<T> std::hash::Hash for ArenaId<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state);
+    }
+}
+impl<T> std::fmt::Debug for ArenaId<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}({})", std::any::type_name::<T>(), self.get())
     }
 }
 
@@ -58,10 +67,10 @@ impl<T> Arena<T> {
         ArenaRange::new(ArenaId::new(start), ArenaId::new(end))
     }
     pub fn get(&self, id: ArenaId<T>) -> Option<&T> {
-        self.items.get(id.get() as usize)
+        self.items.get(id.idx())
     }
     pub fn get_mut(&mut self, id: ArenaId<T>) -> Option<&mut T> {
-        self.items.get_mut(id.get() as usize)
+        self.items.get_mut(id.idx())
     }
     pub fn len(&self) -> usize {
         self.items.len()
@@ -92,7 +101,7 @@ impl<T> std::ops::Deref for Arena<T> {
 impl<T> std::ops::Index<ArenaId<T>> for Arena<T> {
     type Output = T;
     fn index(&self, id: ArenaId<T>) -> &Self::Output {
-        &self.items[id.get() as usize]
+        &self.items[id.idx()]
     }
 }
 impl<T> std::ops::Index<ArenaRange<T>> for Arena<T> {
